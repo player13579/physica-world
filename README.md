@@ -57,4 +57,6 @@ Vite + React + Three.js。ビルド先は`docs/`、相対パス、`.nojekyll`。
 
 2026-09-05の白いフィールド修正では、未初期化の炎用シャドウマップを参照しないよう光源の有効化を修正しました。2D/3D、昼夜、複数地点の燃焼、雨の森へのリセットと再着火を実際のブラウザで確認しています。詳細は`audits/white-field-fix.md`を参照してください。
 
+iOSの長押しコピーUI対策は描画面のみに適用しています。38件の自動テストと通常ブラウザの入力操作を確認済みですが、iOS実機の長押しは未検証です。具体的な不具合と検証条件は`audits/ios-long-press-fix.md`、他ゲームへ再利用する因果・防止策は共有のgame-developmentスキルに分けて記録しています。
+
 物理近似の一次資料: [USGSの浅水流モデル](https://www.usgs.gov/publications/finite-volume-model-two-dimensional-shallow-environmental-flow)、[NISTの火災ダイナミクス](https://www.nist.gov/el/fire-research-division-73300/firegov-fire-service/fire-dynamics)、[NISTの水による消火](https://www.nist.gov/publications/fire-fighting-properties-nistir-6191)、[NASAの地球のエネルギー収支](https://science.nasa.gov/earth/earth-observatory/climate-and-earths-energy-budget/)。実装の詳細と表示の対応は`audits/`に記録しています。

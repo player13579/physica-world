@@ -35,6 +35,7 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { createNatureWorld } from '../src/engines/nature-engine.js';
+import { installGameSurfaceGuards } from '../src/input/game-surface.js';
 
 const TOOLS = [
   {
@@ -158,6 +159,8 @@ export default function NatureWorld() {
     runtime.current = { paused, speed };
   }, [paused, speed]);
   const selected = TOOLS.find((t) => t.id === tool);
+
+  useLayoutEffect(() => installGameSurfaceGuards(canvasRef.current), []);
 
   useEffect(() => {
     let cancelled = false,
@@ -340,6 +343,7 @@ export default function NatureWorld() {
       <canvas
         ref={canvasRef}
         className="world-canvas"
+        draggable={false}
         aria-label="水と火と太陽が作用する自然の世界。道具を選んで地面に触れてください。"
       />
       <div className="vignette" aria-hidden="true" />

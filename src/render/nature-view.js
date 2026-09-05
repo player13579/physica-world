@@ -412,7 +412,6 @@ export function createNatureView(
     configureGestures();
     if (!pointers.size) cursor.visible = false;
   }
-  const contextMenu = (e) => e.preventDefault();
   const lostContext = (e) => {
     e.preventDefault();
     onError?.('描画を再開するには、世界を開き直してください。');
@@ -422,7 +421,6 @@ export function createNatureView(
   canvas.addEventListener('pointermove', pointerMove);
   canvas.addEventListener('pointerup', pointerUp);
   canvas.addEventListener('pointercancel', pointerUp);
-  canvas.addEventListener('contextmenu', contextMenu);
   canvas.addEventListener('webglcontextlost', lostContext);
 
   function resize() {
@@ -736,7 +734,6 @@ export function createNatureView(
       canvas.removeEventListener('pointermove', pointerMove);
       canvas.removeEventListener('pointerup', pointerUp);
       canvas.removeEventListener('pointercancel', pointerUp);
-      canvas.removeEventListener('contextmenu', contextMenu);
       canvas.removeEventListener('webglcontextlost', lostContext);
       controls.dispose();
       dressing.dispose();

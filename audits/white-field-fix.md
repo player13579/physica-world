@@ -1,5 +1,7 @@
 # White field regression — 2026-09-05
 
+Shared causal pattern: `GAME-RENDER-OPTIONAL-SHADOW-INIT-001` in the [game-development catalog](C:/Users/user/.codex/skills/game-development/references/bug-learning-catalog.md). The project-specific evidence below remains authoritative.
+
 ## Reproduction and cause
 
 The previous public build displayed a uniform white field in daylight and a flat gray field at night. UI, simulation, smoke and flame continued to run. Both 2D and 3D were affected in the Codex in-app browser, with `highp` supported.

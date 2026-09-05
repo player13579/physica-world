@@ -82,6 +82,10 @@ button:focus-visible {
   height: 100%;
   display: block;
   touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
   outline: none;
 }
 .vignette {
