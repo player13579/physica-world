@@ -42,6 +42,9 @@ export function createNatureView(
   renderer.toneMappingExposure = 1.05;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
+  // The atmospheric Sky capture is HDR radiance, not a unit-strength ambient
+  // light. Balance indirect illumination against the explicit sun light.
+  scene.environmentIntensity = 0.08;
   scene.background = new THREE.Color(0xaecbd3);
   scene.fog = new THREE.FogExp2(0xaecbd3, 0.009);
   const perspective = new THREE.PerspectiveCamera(42, 1, 0.1, 1800);

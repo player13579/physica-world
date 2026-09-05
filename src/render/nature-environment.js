@@ -8,7 +8,10 @@ const fract = (v) => v - Math.floor(v);
 const hash = (x, z, salt = 0) =>
   fract(Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123);
 
-function makeMaterial(color = 0xffffff, roughness = 0.9, vertexColors = true) {
+// instanceColor is supplied by InstancedMesh independently of vertexColors.
+// These primitives have no geometry.color buffer: requesting it would multiply
+// every instance tint by the missing attribute's default black value.
+function makeMaterial(color = 0xffffff, roughness = 0.9, vertexColors = false) {
   return new THREE.MeshStandardMaterial({
     color,
     roughness,

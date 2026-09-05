@@ -4,6 +4,58 @@ import * as THREE from 'three';
 import { createNatureWorld } from '../src/engines/nature-engine.js';
 import { createEnvironment } from '../src/render/nature-environment.js';
 
+test('environment color channels have actual backing data for every rendered mesh', () => {
+  const scene = new THREE.Scene();
+  const environment = createEnvironment(scene, createNatureWorld({ n: 32 }));
+  let tintedBatches = 0;
+  try {
+    scene.traverse((object) => {
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of materials) {
+        if (!material.vertexColors) continue;
+        const colors = object.geometry.getAttribute('color');
+        assert.ok(
+          colors,
+          `${object.name}: an enabled vertex color channel must exist`,
+        );
+        assert.equal(
+          colors.count,
+          object.geometry.getAttribute('position').count,
+        );
+        assert.ok(colors.array.every(Number.isFinite));
+      }
+      if (!object.isInstancedMesh || !object.count) return;
+      assert.ok(
+        object.instanceColor,
+        `${object.name}: per-instance palette exists`,
+      );
+      assert.ok(object.instanceColor.count >= object.count);
+      assert.ok(object.instanceColor.array.every(Number.isFinite));
+      const palette = object.instanceColor.array;
+      assert.ok(
+        palette.some(
+          (value, i) =>
+            i % 3 === 0 &&
+            Math.max(value, palette[i + 1], palette[i + 2]) -
+              Math.min(value, palette[i + 1], palette[i + 2]) >
+              0.02,
+        ),
+        `${object.name}: its natural palette contains chromatic colors`,
+      );
+      tintedBatches++;
+    });
+    assert.ok(
+      tintedBatches >= 10,
+      'trees, grass, reeds and rocks all exercise the color contract',
+    );
+  } finally {
+    environment.dispose();
+  }
+});
+
 test('forest geometry stays finite, boundary walls stay on the perimeter, disposal releases the scene', () => {
   const w = createNatureWorld({ n: 32 });
   const scene = new THREE.Scene();
