@@ -37,7 +37,7 @@ export function createNatureView(
   };
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -250,8 +250,10 @@ export function createNatureView(
   scene.add(flames);
   const fireLights = Array.from({ length: 6 }, (_, i) => {
     const light = new THREE.PointLight(0xff6821, 0, 9, 2);
-    light.castShadow = i < 2;
-    if (light.castShadow) {
+    // Only active fire sources may enter the shadow pass. An inactive light has
+    // no depth cubemap; sampling it can invalidate every lit draw on WebGL.
+    light.castShadow = false;
+    if (i < 2) {
       light.shadow.mapSize.set(512, 512);
       light.shadow.normalBias = 0.08;
       light.shadow.autoUpdate = false;
@@ -551,7 +553,7 @@ export function createNatureView(
     flames.count = burnSites.length;
     flames.instanceMatrix.needsUpdate = true;
     fireGeometry.attributes.strength.needsUpdate = true;
-    if (frame % 8 === 0) {
+    if (frame === 1 || frame % 8 === 0) {
       const candidates = [...burnSites].sort(
         (a, b) => world.burnRate[b] - world.burnRate[a],
       );
@@ -572,6 +574,8 @@ export function createNatureView(
         const i = chosen[j];
         if (i === undefined) {
           light.intensity = 0;
+          light.castShadow = false;
+          light.shadow.needsUpdate = false;
           return;
         }
         light.position.set(
@@ -580,7 +584,8 @@ export function createNatureView(
           positions[i * 3 + 2],
         );
         light.intensity = world.burnRate[i] * 18000;
-        light.shadow.needsUpdate = true;
+        light.castShadow = j < 2;
+        light.shadow.needsUpdate = light.castShadow;
       });
     }
   }
@@ -750,6 +755,7 @@ export function createNatureView(
       environmentTarget?.dispose();
       pmrem.dispose();
       sun.shadow.dispose();
+      fireLights.forEach((light) => light.shadow.dispose());
       renderer.dispose();
     },
   };

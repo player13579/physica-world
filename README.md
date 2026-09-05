@@ -38,7 +38,7 @@
 
 現実の自然をすべて解くものではなく、相互作用を遊べる数値近似です。水は地形上の深さで表すため、空中の滝・飛沫・砕波・水中の三次元渦は解きません。煙・細かな波・草木の揺れは物理状態に応じた描画で、空気全体のNavier–Stokesや木の弾性体計算ではありません。燃焼化学、酸素濃度、雲の生成、生態系、完全な光の多重散乱は対象外です。火の照明と樹冠の熱遮蔽も近似です。
 
-影・屈折・反射を優先し、画素比上限2、太陽の影2048px、主要な火の影512pxを使用します。タブレットの機種によって速度は変わります。タブレット実機・ブラウザGPUでの操作検証は未実施です。
+影・屈折・反射を優先し、画素比上限2、太陽の影2048px、主要な火の影512pxを使用します。タブレットの機種によって速度は変わります。ブラウザのWebGL描画は1024×768と768×1024で確認済みです。タブレット実機では未検証です。
 
 ## 開発と検証
 
@@ -54,5 +54,7 @@ npm run build
 Vite + React + Three.js。ビルド先は`docs/`、相対パス、`.nojekyll`。GitHub Pagesは`Codex-honoo`ブランチの`/docs`を公開します。旧実験室エンジンとその回帰テストはソースに残っていますが、現在の入口では読み込みません。
 
 数値検証は水収支、流れの方向、地形による流路変更、放射による加熱・発火、燃料消費、水による消火、熱移流、降雨、太陽・地形・樹冠の影、長時間の有限性を含みます。Three.jsのCPU検証では木の寸法、地層の壁が外周内に留まること、燃えた/浸水した草の非表示、資源解放を確認します。SSR・ビルドはブラウザ描画の検証とは別です。
+
+2026-09-05の白いフィールド修正では、未初期化の炎用シャドウマップを参照しないよう光源の有効化を修正しました。2D/3D、昼夜、複数地点の燃焼、雨の森へのリセットと再着火を実際のブラウザで確認しています。詳細は`audits/white-field-fix.md`を参照してください。
 
 物理近似の一次資料: [USGSの浅水流モデル](https://www.usgs.gov/publications/finite-volume-model-two-dimensional-shallow-environmental-flow)、[NISTの火災ダイナミクス](https://www.nist.gov/el/fire-research-division-73300/firegov-fire-service/fire-dynamics)、[NISTの水による消火](https://www.nist.gov/publications/fire-fighting-properties-nistir-6191)、[NASAの地球のエネルギー収支](https://science.nasa.gov/earth/earth-observatory/climate-and-earths-energy-budget/)。実装の詳細と表示の対応は`audits/`に記録しています。
