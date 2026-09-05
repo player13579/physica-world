@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>PHYSICA sky GPU regression</title>
+<style>body{background:#16232a;color:#e2efdb;font:16px monospace;padding:24px}pre{white-space:pre-wrap}</style>
+<h1>Sky environment GPU regression</h1>
+<pre id="report">Running the actual Sky / PMREM capture and pixel readback…</pre>
+<script type="module">
+import * as THREE from 'three';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { getSunState } from '../src/engines/nature-engine.js';
+import { createSkyEnvironment } from '../src/render/sky-environment.js';
+
+const renderer = new THREE.WebGLRenderer();
+const pmrem = new THREE.PMREMGenerator(renderer);
+const sky = new Sky();
+sky.scale.setScalar(1000);
+Object.assign(sky.material.uniforms.turbidity, { value: 3.2 });
+Object.assign(sky.material.uniforms.rayleigh, { value: 2.1 });
+Object.assign(sky.material.uniforms.mieCoefficient, { value: 0.006 });
+Object.assign(sky.material.uniforms.mieDirectionalG, { value: 0.82 });
+const capture = createSkyEnvironment(sky);
+const oldScene = new THREE.Scene();
+oldScene.add(sky);
+const background = new THREE.Color(0xaecbd3);
+oldScene.background = background;
+const gl = renderer.getContext();
+const report = { precision: renderer.capabilities.precision, rows: [] };
+
+function inspect(target) {
+  const data = new Uint16Array(target.width * target.height * 4);
+  renderer.readRenderTargetPixels(target, 0, 0, target.width, target.height, data);
+  let nonFinite = 0, finiteMax = 0, alphaPixels = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (i % 4 === 3) { if (data[i]) alphaPixels++; continue; }
+    const value = THREE.DataUtils.fromHalfFloat(data[i]);
+    if (!Number.isFinite(value)) nonFinite++;
+    else finiteMax = Math.max(finiteMax, value);
+  }
+  const error = gl.getError();
+  return { nonFinite, finiteMax, alphaPixels, glError: error, readbackValid: error === 0 && alphaPixels > 0 };
+}
+
+try {
+  for (const hour of [12, 15]) {
+    sky.material.uniforms.sunPosition.value.fromArray(getSunState({hour, sunPower:1, rain:0}).direction).multiplyScalar(200);
+    for (const mode of ['original-disc', 'atmosphere-only']) {
+      const target = mode === 'original-disc' ? pmrem.fromScene(oldScene, .04, .1, 1200) : capture.capture(pmrem, background);
+      try { report.rows.push({hour, mode, ...inspect(target)}); }
+      finally { target.dispose(); }
+    }
+  }
+  report.correctedFinite = report.rows.filter(row => row.mode === 'atmosphere-only').every(row => row.readbackValid && row.nonFinite === 0);
+} catch (error) {
+  report.error = String(error);
+} finally {
+  capture.dispose();
+  sky.geometry.dispose();
+  sky.material.dispose();
+  pmrem.dispose();
+  renderer.dispose();
+  document.querySelector('#report').textContent = JSON.stringify(report, null, 2);
+}
+</script>
+</html>

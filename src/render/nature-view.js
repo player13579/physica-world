@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { createEnvironment } from './nature-environment.js';
+import { createSkyEnvironment } from './sky-environment.js';
 import { getSunState } from '../engines/nature-engine.js';
 
 const clamp = THREE.MathUtils.clamp;
@@ -93,6 +94,7 @@ export function createNatureView(
   scene.add(sun, sun.target);
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileCubemapShader();
+  const skyEnvironment = createSkyEnvironment(sky);
   let environmentTarget = null;
   let lastSkyKey = '';
   const sunDirection = new THREE.Vector3();
@@ -469,13 +471,8 @@ export function createNatureView(
     scene.background.copy(fogColor);
     smokeMaterial.uniforms.uLight.value = day;
     sky.visible = day > 0.015;
-    // Capture the atmospheric sky alone for Fresnel reflections on the water.
-    const envScene = new THREE.Scene();
-    const envSky = sky.clone();
-    envSky.material = sky.material;
-    envScene.add(envSky);
-    envScene.background = fogColor;
-    const next = pmrem.fromScene(envScene, 0.04, 0.1, 1200);
+    // Exclude the over-range solar disc from the half-float environment.
+    const next = skyEnvironment.capture(pmrem, fogColor);
     scene.environment = next.texture;
     environmentTarget?.dispose();
     environmentTarget = next;
@@ -753,6 +750,7 @@ export function createNatureView(
       geometries.forEach((g) => g.dispose());
       materials.forEach((m) => m.dispose());
       environmentTarget?.dispose();
+      skyEnvironment.dispose();
       pmrem.dispose();
       sun.shadow.dispose();
       fireLights.forEach((light) => light.shadow.dispose());
