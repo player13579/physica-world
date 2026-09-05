@@ -1,187 +1,125 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Atom,
-  Circle,
-  Square,
-  MousePointer2,
-  Eraser,
-  Minus,
+  Mountain,
+  Droplets,
+  Flame,
+  Sprout,
+  Hand,
+  Shovel,
+  ArrowUpFromLine,
+  CloudRain,
+  Sun,
+  Wind,
   Play,
   Pause,
   RotateCcw,
-  Droplets,
+  SlidersHorizontal,
   Thermometer,
-  Lightbulb,
-  Box,
-  Move3D,
-  Wind,
-  Snowflake,
-  Flame,
+  Compass,
+  X,
+  Info,
+  ChevronRight,
   Layers3,
-  ArrowUpRight,
-  Check,
-  Activity,
-  HelpCircle,
-  ArrowRight,
-  StepForward,
+  Map,
+  Focus,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select';
-import { createMechanics } from '../src/engines/mechanics';
-import { createFluid } from '../src/engines/fluid';
-import { createHeat } from '../src/engines/heat';
-import { createOptics } from '../src/engines/optics';
-import { createCanvas2D } from '../src/render/canvas2d';
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import { createNatureWorld } from '../src/engines/nature-engine.js';
 
-const LABS = {
-  mechanics: {
-    name: '力学',
-    en: 'MECHANICS',
-    title: '動きの実験室',
-    icon: Box,
-    color: '#c0f783',
-    formula: 'F = ma',
-    presets: [
-      ['playground', '自由な実験場'],
-      ['domino', 'ドミノの連鎖'],
-      ['pendulum', '二重振り子'],
-      ['challenge', 'ボールをゴールへ'],
-    ],
-    tools: [
-      ['grab', 'つかむ', MousePointer2],
-      ['ball', 'ボール', Circle],
-      ['box', 'ブロック', Square],
-      ['platform', '足場', Minus],
-      ['erase', '消す', Eraser],
-    ],
-    description:
-      '重力・衝突・摩擦・反発を計算。2Dは剛体、3Dは奥行きもある剛体運動です。空気抵抗を簡略化しています。',
-    tip: 'ボールをつかんで離す。重力を月の値にすると、落ち方はどう変わる？',
+const TOOLS = [
+  {
+    id: 'look',
+    name: '見わたす',
+    icon: Hand,
+    tip: '1本指で回転。2本指で移動・拡大。',
+    color: '#e4ebd7',
   },
-  fluid: {
-    name: '流体',
-    en: 'FLUID DYNAMICS',
-    title: '流れの実験室',
+  {
+    id: 'water',
+    name: '水を注ぐ',
     icon: Droplets,
-    color: '#78d5f5',
-    formula: '∇ · u ≈ 0',
-    presets: [
-      ['vortex', '渦とインク'],
-      ['channel', '障害物のある流れ'],
-      ['empty', '空の流体槽'],
-    ],
-    tools: [
-      ['dye', 'インク', Droplets],
-      ['stir', 'かき混ぜる', Wind],
-      ['wall', '壁', Square],
-      ['erase', '消す', Eraser],
-    ],
-    description:
-      '2Dは非圧縮流の格子近似、3Dは密度・圧力・粘性を計算する粒子近似です。厳密な水面や乱流の再現は対象外です。',
-    tip: 'インクを引くように描いて流れを作り、粘性を変えて広がり方を観察しよう。',
+    tip: '指を置いたところに水を注ぎます。低い場所へ流れていきます。',
+    color: '#83dbe8',
   },
-  heat: {
-    name: '熱',
-    en: 'THERMODYNAMICS',
-    title: '熱の実験室',
-    icon: Thermometer,
-    color: '#ffb47b',
-    formula: '∂T/∂t = α∇²T',
-    presets: [
-      ['conduction', '熱源と冷却源'],
-      ['insulation', '断熱壁とすき間'],
-      ['empty', '室温の空間'],
-    ],
-    tools: [
-      ['hot', '熱源', Flame],
-      ['cold', '冷却源', Snowflake],
-      ['wall', '断熱壁', Square],
-      ['erase', '消す', Eraser],
-    ],
-    description:
-      '熱力学のうち熱伝導を扱います。2Dは面、3Dは体積内の温度拡散を計算。対流・放射・相変化は含まず、時間と熱拡散率は学習用の相対値です。',
-    tip: '熱源の近くに断熱壁を置こう。熱はすき間を通って、どこまで伝わる？',
+  {
+    id: 'fire',
+    name: '火をつける',
+    icon: Flame,
+    tip: '乾いた草地に触れて着火。風向きや地面の湿りで広がり方が変わります。',
+    color: '#ffc17b',
   },
-  optics: {
-    name: '光',
-    en: 'OPTICS',
-    title: '光の実験室',
-    icon: Lightbulb,
-    color: '#c8b9ff',
-    formula: 'n₁sinθ₁ = n₂sinθ₂',
-    presets: [
-      ['prism', 'プリズム'],
-      ['mirrors', '鏡と反射'],
-      ['lens', 'ガラスのレンズ'],
-    ],
-    tools: [
-      ['move', '移動', MousePointer2],
-      ['mirror', '鏡', Minus],
-      ['glass', 'ガラス', Circle],
-      ['erase', '消す', Eraser],
-    ],
-    description:
-      'スネルの法則に従う屈折・鏡面反射・全反射を計算する幾何光学です。2Dでは簡易分散も表示。干渉・回折などの波動現象は含みません。',
-    tip: 'ガラスの屈折率や光の角度を変えよう。鏡を置くと光の道はどこへ伸びる？',
+  {
+    id: 'raise',
+    name: '土を盛る',
+    icon: ArrowUpFromLine,
+    tip: '川の途中に土を盛ると、水をせき止めたり流れを変えられます。',
+    color: '#d7bc8e',
   },
+  {
+    id: 'lower',
+    name: '地面を掘る',
+    icon: Shovel,
+    tip: '川から溝を掘って、新しい流路や池を作れます。',
+    color: '#cfb497',
+  },
+  {
+    id: 'plant',
+    name: '緑を増やす',
+    icon: Sprout,
+    tip: '地面に草木を増やします。燃えた場所にも植え直せます。',
+    color: '#b1d982',
+  },
+  {
+    id: 'rain',
+    name: '雨を降らす',
+    icon: CloudRain,
+    tip: '触れた場所を濡らして冷やします。燃えている場所なら消火できます。',
+    color: '#a4c8ef',
+  },
+];
+const INITIAL_SETTINGS = {
+  hour: 15,
+  sunPower: 1,
+  wind: 2,
+  windAngle: 30,
+  rain: 0,
+  spring: 1,
+  ambient: 22,
 };
-const DEFAULTS = {
-  gravity: 9.81,
-  restitution: 0.28,
-  friction: 0.52,
-  viscosity: 0.18,
-  force: 1,
-  conductivity: 1,
-  sourceTemperature: 90,
-  angle: 0,
-  refractiveIndex: 1.5,
-  rayCount: 3,
-  dispersion: true,
-  objectAngle: 45,
-};
-const factories = {
-  mechanics: createMechanics,
-  fluid: createFluid,
-  heat: createHeat,
-  optics: createOptics,
-};
-const fmt = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '—');
-function Choice({ label, value, options, onChange }) {
+const clockLabel = (h) =>
+  `${String(Math.floor(h)).padStart(2, '0')}:${Math.round((h % 1) * 60)
+    .toString()
+    .padStart(2, '0')}`;
+const elapsedLabel = (t) =>
+  `${Math.floor(t / 60)}:${Math.floor(t % 60)
+    .toString()
+    .padStart(2, '0')}`;
+function RangeControl({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  unit = '',
+  onChange,
+}) {
   return (
-    <Select
-      value={value}
-      onValueChange={onChange}
-      items={Object.fromEntries(options)}
-    >
-      <SelectTrigger className="choice" aria-label={label}>
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent className="choice-popup">
-        {options.map(([v, n]) => (
-          <SelectItem value={v} key={v}>
-            {n}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-function Range({ label, value, min, max, step = 1, unit = '', onChange }) {
-  return (
-    <div className="range">
-      <div className="field-line">
-        <label>{label}</label>
+    <div className="range-control">
+      <div className="range-label">
+        <span>{label}</span>
         <output>
-          {fmt(value, step < 0.1 ? 2 : step < 1 ? 1 : 0)} <small>{unit}</small>
+          {value}
+          {unit}
         </output>
       </div>
       <Slider
@@ -195,929 +133,637 @@ function Range({ label, value, min, max, step = 1, unit = '', onChange }) {
     </div>
   );
 }
-function Toggle({ label, checked, onChange }) {
-  return (
-    <div className="field-line toggle">
-      <span>{label}</span>
-      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-}
 
-export default function App() {
-  const [mode, setMode] = useState('mechanics'),
-    [dimension, setDimension] = useState('2d'),
-    [tool, setTool] = useState('grab'),
-    [playing, setPlaying] = useState(true),
+export default function NatureWorld() {
+  const canvasRef = useRef(null),
+    engineRef = useRef(null),
+    viewRef = useRef(null);
+  const [ready, setReady] = useState(false),
+    [error, setError] = useState('');
+  const [mode, setMode] = useState('3d'),
+    [tool, setTool] = useState('look'),
+    [radius, setRadius] = useState(1.2);
+  const [paused, setPaused] = useState(false),
     [speed, setSpeed] = useState(1),
-    [options, setOptions] = useState(DEFAULTS),
-    [visual, setVisual] = useState({ grid: true, vectors: false }),
-    [material, setMaterial] = useState('rubber'),
-    [preset, setPreset] = useState('playground'),
-    [metrics, setMetrics] = useState({}),
-    [fps, setFps] = useState(60),
-    [elapsed, setElapsed] = useState(0),
-    [help, setHelp] = useState(false),
-    [error, setError] = useState(''),
-    [loading, setLoading] = useState(true),
-    [height, setHeight] = useState(3),
-    [interactions, setInteractions] = useState(0),
-    [complete, setComplete] = useState(false);
-  const canvas = useRef(),
-    viewport = useRef(),
-    engine = useRef(null),
-    view = useRef(null),
-    timer = useRef(0),
-    latest = useRef({}),
-    simState = useRef(null),
-    pointer = useRef(null),
-    stepOnce = useRef(false);
+    [thermal, setThermal] = useState(false);
+  const [settings, setSettings] = useState(INITIAL_SETTINGS),
+    [drawer, setDrawer] = useState(false),
+    [help, setHelp] = useState(false);
+  const [sample, setSample] = useState(null),
+    [stats, setStats] = useState(null),
+    [tip, setTip] = useState(true),
+    [preset, setPreset] = useState('valley');
+  const runtime = useRef({ paused, speed });
   useLayoutEffect(() => {
-    latest.current = {
-      mode,
-      dimension,
-      tool,
-      playing,
-      speed,
-      options,
-      visual,
-      material,
-      height,
-      interactions,
-      preset,
-    };
-  });
-  const lab = LABS[mode],
-    Icon = lab.icon;
-  const change = (key, value) => setOptions((o) => ({ ...o, [key]: value }));
-  function prepareLab() {
-    setError('');
-    setLoading(true);
-    setElapsed(0);
-    setMetrics({});
-  }
-  function selectLab(value) {
-    if (!LABS[value]) return;
-    prepareLab();
-    setMode(value);
-    setTool(dimension === '3d' ? 'orbit' : LABS[value].tools[0][0]);
-    setPreset(LABS[value].presets[0][0]);
-    setComplete(false);
-    setInteractions(0);
-  }
-  function selectDimension(value) {
-    prepareLab();
-    setDimension(value);
-    setTool(value === '3d' ? 'orbit' : lab.tools[0][0]);
-    setPreset(value === '3d' ? 'default' : lab.presets[0][0]);
-    setComplete(false);
-    setInteractions(0);
-  }
-  function reset(name = preset) {
-    engine.current?.pointerUp?.();
-    engine.current?.reset(name);
-    engine.current?.setOptions(options);
-    setPreset(name);
-    timer.current = 0;
-    setElapsed(0);
-    setComplete(false);
-    setInteractions(0);
-    setError('');
-  }
+    runtime.current = { paused, speed };
+  }, [paused, speed]);
+  const selected = TOOLS.find((t) => t.id === tool);
+
   useEffect(() => {
-    engine.current?.setOptions(options);
-  }, [options]);
-  useEffect(() => {
-    let alive = true,
-      raf,
-      renderer,
-      sim,
-      last = performance.now(),
-      acc = 0,
-      sample = 0;
-    timer.current = 0;
-    simState.current = null;
-    async function start() {
-      try {
-        if (dimension === '3d') {
-          const [s, r] = await Promise.all([
-            import('../src/engines/spatial.js'),
-            import('../src/render/spatial-view.js'),
-          ]);
-          if (!alive) return;
-          sim = s.createSpatial({ mode });
-          renderer = r.createSpatialView(canvas.current);
-        } else {
-          sim = factories[mode]();
-          sim.reset(LABS[mode].presets[0][0]);
-          renderer = createCanvas2D(canvas.current);
-        }
-        sim.setOptions(latest.current.options);
-        engine.current = sim;
-        view.current = renderer;
-        setLoading(false);
-        function frame(now) {
-          if (!alive) return;
-          const dt = Math.min((now - last) / 1000, 0.05);
-          last = now;
-          const c = latest.current;
-          try {
-            if (c.playing && !document.hidden) {
-              acc = Math.min(acc + dt * c.speed, 0.075);
-              while (acc >= 1 / 60) {
-                sim.step(1 / 60);
-                timer.current += 1 / 60;
-                acc -= 1 / 60;
+    let cancelled = false,
+      raf = 0,
+      view = null;
+    const world = createNatureWorld({ n: 80, size: 32, seed: 714 });
+    engineRef.current = world;
+    let last = 0,
+      accumulator = 0,
+      report = 0,
+      lastSample = null;
+    import('../src/render/nature-view.js')
+      .then(({ createNatureView }) => {
+        if (cancelled) return;
+        try {
+          view = createNatureView(canvasRef.current, world, {
+            onSample: (value) => {
+              lastSample = value;
+            },
+            onError: setError,
+          });
+          viewRef.current = view;
+          setSettings({ ...world.settings });
+          setReady(true);
+          const animate = (timestamp) => {
+            if (cancelled) return;
+            const dt = last ? Math.min((timestamp - last) / 1000, 0.1) : 0;
+            last = timestamp;
+            const current = runtime.current;
+            let advanced = 0;
+            if (!document.hidden && !current.paused) {
+              accumulator = Math.min(accumulator + dt * current.speed, 0.5);
+              let steps = 0;
+              while (accumulator >= 1 / 30 && steps < 12) {
+                world.step(1 / 30);
+                accumulator -= 1 / 30;
+                advanced += 1 / 30;
+                steps++;
               }
-            } else acc = 0;
-            if (stepOnce.current) {
-              sim.step(1 / 60);
-              timer.current += 1 / 60;
-              stepOnce.current = false;
+            } else accumulator = 0;
+            view.render(advanced, dt);
+            report += dt;
+            if (report > 0.35) {
+              setStats(world.stats());
+              if (lastSample)
+                setSample(world.sample(lastSample.x, lastSample.z));
+              report = 0;
             }
-            const s = sim.getState();
-            simState.current = s;
-            if (dimension === '3d') {
-              renderer.setInteraction(c.tool);
-              renderer.draw(s, c.visual);
-            } else renderer.draw(mode, s, c.visual);
-            sample += dt;
-            if (sample > 0.25) {
-              setMetrics(s.stats || {});
-              setElapsed(timer.current);
-              setFps(Math.min(60, Math.round(1 / Math.max(dt, 0.001))));
-              sample = 0;
-              let won = s.goal?.complete;
-              if (c.interactions > 0) {
-                if (mode === 'fluid')
-                  won =
-                    dimension === '3d'
-                      ? s.stats.particles >= 400
-                      : s.stats.dye >= 0.15;
-                if (mode === 'heat') won = s.stats.average >= 30;
-                if (mode === 'optics') won = s.stats.reflections >= 1;
-                if (mode === 'mechanics' && dimension === '3d')
-                  won = s.stats.objects >= 15;
-              }
-              if (won) setComplete(true);
-            }
-          } catch (e) {
-            setError(
-              '計算を続けられませんでした。「リセット」で実験をやり直せます。',
-            );
-            setPlaying(false);
-            console.error(e);
-          }
-          raf = requestAnimationFrame(frame);
-        }
-        raf = requestAnimationFrame(frame);
-      } catch (e) {
-        if (alive) {
-          setLoading(false);
+            raf = requestAnimationFrame(animate);
+          };
+          raf = requestAnimationFrame(animate);
+        } catch (cause) {
           setError(
-            dimension === '3d'
-              ? '3Dを開始できませんでした。WebGLに対応したブラウザで開くか、2Dに切り替えてください。'
-              : '実験室を読み込めませんでした。ページを再読み込みしてください。',
+            `この端末で描画を開始できませんでした。${cause?.message || ''}`,
           );
         }
-        console.error(e);
-      }
-    }
-    void start();
+      })
+      .catch(() =>
+        setError(
+          '世界を読み込めませんでした。ページを再読み込みしてください。',
+        ),
+      );
     return () => {
-      alive = false;
+      cancelled = true;
       cancelAnimationFrame(raf);
-      sim?.pointerUp?.();
-      renderer?.dispose();
-      if (engine.current === sim) engine.current = null;
-      if (view.current === renderer) view.current = null;
+      view?.dispose();
+      viewRef.current = null;
+      engineRef.current = null;
     };
-  }, [mode, dimension]);
+  }, []);
   useEffect(() => {
-    const key = (e) => {
+    viewRef.current?.setMode(mode);
+  }, [mode, ready]);
+  useEffect(() => {
+    viewRef.current?.setTool(tool, radius);
+  }, [tool, radius, ready]);
+  useEffect(() => {
+    viewRef.current?.setThermal(thermal);
+  }, [thermal, ready]);
+  useEffect(() => {
+    if (engineRef.current) Object.assign(engineRef.current.settings, settings);
+  }, [settings]);
+  useEffect(() => {
+    function key(event) {
       if (
-        ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName) ||
-        e.target.closest('[role="slider"],[role="combobox"]')
+        event.target instanceof HTMLElement &&
+        (event.target.closest('button,input,[role="slider"],[role="dialog"]') ||
+          event.target.isContentEditable)
       )
         return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setPlaying((p) => !p);
+      if (event.code === 'Space') {
+        event.preventDefault();
+        setPaused((v) => !v);
       }
-      if (e.key.toLowerCase() === 'r') reset();
-    };
+      if (event.key === 'Escape') setTool('look');
+      const idx = Number(event.key) - 1;
+      if (idx >= 0 && idx < TOOLS.length) setTool(TOOLS[idx].id);
+    }
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  });
-  // A small optional WebMCP surface, routed through the same visible actions.
-  useEffect(() => {
-    const ctx = document.modelContext;
-    if (!ctx?.registerTool) return;
-    const abort = new AbortController();
-    const register = (t) => {
-      try {
-        Promise.resolve(ctx.registerTool(t, { signal: abort.signal })).catch(
-          () => {},
-        );
-      } catch {}
-    };
-    register({
-      name: 'read_physics_world',
-      description:
-        'Read active lab, dimension, controls and measured simulation values.',
-      inputSchema: {
-        type: 'object',
-        properties: {},
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: true },
-      execute: () => ({
-        lab: latest.current.mode,
-        dimension: latest.current.dimension,
-        playing: latest.current.playing,
-        parameters: latest.current.options,
-        measurements: simState.current?.stats || {},
-      }),
-    });
-    register({
-      name: 'set_physics_parameters',
-      description: 'Change physical parameters in the currently visible lab.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          gravity: { type: 'number', minimum: 0, maximum: 20 },
-          refractiveIndex: { type: 'number', minimum: 1, maximum: 2 },
-          sourceTemperature: { type: 'number', minimum: 30, maximum: 120 },
-        },
-        additionalProperties: false,
-      },
-      execute: async (input) => {
-        if (!input || typeof input !== 'object') throw Error('Object required');
-        const limits = {
-          gravity: [0, 20],
-          refractiveIndex: [1, 2],
-          sourceTemperature: [30, 120],
-        };
-        for (const [k, v] of Object.entries(input))
-          if (
-            !limits[k] ||
-            !Number.isFinite(v) ||
-            v < limits[k][0] ||
-            v > limits[k][1]
-          )
-            throw Error('Invalid parameter');
-        setOptions((o) => ({ ...o, ...input }));
-        await new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)),
-        );
-        return { parameters: latest.current.options };
-      },
-    });
-    return () => abort.abort();
   }, []);
-  function point(e) {
-    const r = canvas.current.getBoundingClientRect();
-    return [
-      ((e.clientX - r.left) / r.width) * 1000,
-      ((e.clientY - r.top) / r.height) * 650,
-    ];
-  }
-  function down(e) {
-    if (e.button !== 0 || !engine.current || loading) return;
-    canvas.current.focus({ preventScroll: true });
-    pointer.current = { x: e.clientX, y: e.clientY };
-    canvas.current.setPointerCapture(e.pointerId);
-    if (dimension === '2d') {
-      const [x, y] = point(e);
-      engine.current.pointerDown(x, y, tool, material);
-      setInteractions((v) => v + 1);
+  useEffect(() => {
+    const context = navigator.modelContext;
+    if (!context?.registerTool || !ready) return;
+    const names = ['read_nature_world', 'change_nature_weather'];
+    try {
+      context.registerTool({
+        name: names[0],
+        description:
+          'Read live natural-world weather and water/fire statistics.',
+        inputSchema: { type: 'object', properties: {} },
+        execute: async () => ({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                settings: engineRef.current.settings,
+                stats: engineRef.current.stats(),
+              }),
+            },
+          ],
+        }),
+      });
+      context.registerTool({
+        name: names[1],
+        description: 'Change the time of day, wind, rain or spring inflow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            hour: { type: 'number', minimum: 0, maximum: 23.75 },
+            wind: { type: 'number', minimum: 0, maximum: 12 },
+            rain: { type: 'number', minimum: 0, maximum: 100 },
+            spring: { type: 'number', minimum: 0, maximum: 4 },
+          },
+        },
+        execute: async (values) => {
+          const bounds = {
+              hour: [0, 23.75],
+              wind: [0, 12],
+              rain: [0, 100],
+              spring: [0, 4],
+            },
+            patch = {};
+          for (const [key, [min, max]] of Object.entries(bounds))
+            if (typeof values[key] === 'number' && Number.isFinite(values[key]))
+              patch[key] = Math.max(min, Math.min(max, values[key]));
+          setSettings((s) => ({ ...s, ...patch }));
+          return { content: [{ type: 'text', text: JSON.stringify(patch) }] };
+        },
+      });
+    } catch {
+      /* Optional integration; all controls work without it. */
     }
-  }
-  function move(e) {
-    if (dimension === '2d' && pointer.current) {
-      engine.current?.pointerMove(...point(e), tool);
-    }
-  }
-  function up(e) {
-    if (
-      dimension === '3d' &&
-      pointer.current &&
-      tool !== 'orbit' &&
-      Math.hypot(e.clientX - pointer.current.x, e.clientY - pointer.current.y) <
-        12
-    ) {
-      const p = view.current?.pick(
-        e.clientX,
-        e.clientY,
-        height,
-        ['erase', 'grab', 'move', 'stir'].includes(tool),
-      );
-      if (p) {
-        engine.current?.interact(p, tool);
-        setInteractions((v) => v + 1);
+    return () => {
+      for (const name of names) {
+        try {
+          context.unregisterTool?.(name);
+        } catch {
+          /* already removed */
+        }
       }
-    }
-    engine.current?.pointerUp?.();
-    pointer.current = null;
-    if (canvas.current?.hasPointerCapture(e.pointerId))
-      canvas.current.releasePointerCapture(e.pointerId);
+    };
+  }, [ready]);
+
+  function updateSetting(key, value) {
+    setSettings((s) => ({ ...s, [key]: value }));
   }
-  const tools =
-    dimension === '3d'
-      ? [
-          ['orbit', '視点', Move3D],
-          ...lab.tools.map((t) =>
-            t[0] === 'grab' ? ['grab', '押す', ArrowUpRight] : t,
-          ),
-        ]
-      : lab.tools;
-  const tip =
-    dimension === '3d'
-      ? '視点ツールでドラッグして回転。ホイール・ピンチで拡大。配置ツールはクリックで追加します。'
-      : tool === 'grab' || tool === 'move'
-        ? '物体をドラッグして動かす'
-        : '実験エリアをクリック、またはドラッグして配置';
-  const mission =
-    mode === 'mechanics'
-      ? dimension === '3d'
-        ? '物体を15個に増やして衝突を観察しよう。'
-        : preset === 'challenge'
-          ? '白い輪のボールを TARGET の枠内で止めよう。'
-          : '「ボールをゴールへ」を選んで、運ぶ仕掛けを作ろう。'
-      : mode === 'fluid'
-        ? dimension === '3d'
-          ? '水の粒子を400個まで増やしてみよう。'
-          : 'インクを広げ、平均濃度を15%以上にしよう。'
-        : mode === 'heat'
-          ? '熱源を配置して平均温度を30°Cにしよう。'
-          : '光の経路に鏡を置き、1回以上反射させよう。';
+  function reset(next = preset) {
+    const world = engineRef.current;
+    if (!world) return;
+    world.reset(next);
+    setPreset(next);
+    setSettings({ ...world.settings });
+    setStats(world.stats());
+    setSample(null);
+  }
+
   return (
-    <div className="app" style={{ '--lab-color': lab.color }}>
-      <header className="masthead">
-        <a className="brand" href="./" aria-label="PHYSICA ホーム">
-          <span className="brand-mark">
-            <Atom />
-          </span>
-          <span>
-            PHYSICA<span className="brand-dot">.</span>
-          </span>
-        </a>
-        <div className="masthead-label">物理を遊ぶ、実験世界。</div>
-        <Button
-          variant="ghost"
-          className="help-button"
-          onClick={() => setHelp((h) => !h)}
-          aria-expanded={help}
-        >
-          <HelpCircle size={18} />
-          <span>遊び方</span>
-        </Button>
-      </header>
-      <main>
-        <div className="workspace-heading">
+    <main className="nature-app">
+      <canvas
+        ref={canvasRef}
+        className="world-canvas"
+        aria-label="水と火と太陽が作用する自然の世界。道具を選んで地面に触れてください。"
+      />
+      <div className="vignette" aria-hidden="true" />
+      <header className="world-header">
+        <div className="world-brand">
+          <Mountain size={24} strokeWidth={1.4} />
           <div>
-            <div className="eyebrow">YOUR PERSONAL PHYSICS LAB</div>
-            <h1>法則を変える。世界が動く。</h1>
+            <strong>PHYSICA</strong>
+            <span>自然の世界</span>
           </div>
-          <Tabs
-            className="dimension-tabs"
-            value={dimension}
-            onValueChange={selectDimension}
-          >
-            <TabsList aria-label="シミュレーションの次元">
+        </div>
+        <div className="header-center">
+          <span className={`live-dot ${paused ? 'paused' : ''}`} />
+          {paused ? '時を止めています' : '世界は動いています'}
+          <span className="world-clock">{elapsedLabel(stats?.time || 0)}</span>
+        </div>
+        <div className="header-actions">
+          <Tabs value={mode} onValueChange={setMode}>
+            <TabsList className="mode-tabs">
               <TabsTrigger value="2d">
-                <Square />
-                2D<span>断面で実験</span>
+                <Map size={16} />
+                2D
               </TabsTrigger>
               <TabsTrigger value="3d">
-                <Box />
-                3D<span>空間で実験</span>
+                <Layers3 size={16} />
+                3D
               </TabsTrigger>
             </TabsList>
           </Tabs>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="glass-button"
+            aria-label="自然の設定"
+            onClick={() => setDrawer(true)}
+          >
+            <SlidersHorizontal />
+          </Button>
         </div>
-        <Tabs className="lab-tabs" value={mode} onValueChange={selectLab}>
-          <TabsList aria-label="物理の実験室">
-            {Object.entries(LABS).map(([id, l], i) => {
-              const I = l.icon;
-              return (
-                <TabsTrigger key={id} value={id}>
-                  <span className="lab-number">0{i + 1}</span>
-                  <I />
-                  <span>
-                    {l.name}
-                    <small>{l.en}</small>
-                  </span>
-                  <ArrowUpRight className="tab-arrow" />
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-        </Tabs>
-        {help && (
-          <div className="help-panel">
-            <div>
-              <strong>2D：現象を見渡して描く</strong>
-              <p>
-                道具を選び、エリア内をクリックまたはドラッグ。Spaceで一時停止、Rでリセット。
-              </p>
+      </header>
+      <aside className="weather-badge glass-panel">
+        <Sun size={18} />
+        <span>{clockLabel(settings.hour)}</span>
+        <i />
+        <Wind size={17} />
+        <span>
+          {settings.wind} <small>m/s</small>
+        </span>
+        {settings.rain > 0 && (
+          <>
+            <i />
+            <CloudRain size={17} />
+            <span>
+              {settings.rain} <small>mm/h</small>
+            </span>
+          </>
+        )}
+      </aside>
+      <div className="view-actions">
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`glass-button ${thermal ? 'enabled' : ''}`}
+          aria-label="温度を見る"
+          aria-pressed={thermal}
+          onClick={() => setThermal((v) => !v)}
+        >
+          <Thermometer />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="glass-button"
+          aria-label="視点を戻す"
+          onClick={() => viewRef.current?.resetCamera()}
+        >
+          <Focus />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="glass-button"
+          aria-label="操作と世界について"
+          onClick={() => setHelp(true)}
+        >
+          <Info />
+        </Button>
+      </div>
+      {thermal && (
+        <div className="thermal-legend glass-panel">
+          <span>地表の温度</span>
+          <div />
+          <small>
+            12°C<span>80°C</span>150°C以上
+          </small>
+        </div>
+      )}
+      {sample && (
+        <aside className="place-reading glass-panel">
+          <span className="reading-title">触れた場所</span>
+          <strong>
+            {(sample.water > 0.01
+              ? sample.waterTemperature
+              : sample.temperature
+            ).toFixed(1)}
+            <small>°C</small>
+          </strong>
+          <div>
+            {sample.water > 0.01
+              ? `水深 ${(sample.water * 100).toFixed(0)} cm · 流れ ${sample.speed.toFixed(1)} m/s`
+              : sample.fire > 0.01
+                ? '燃えています'
+                : `地面の湿り ${Math.round(sample.moisture * 100)}%`}
+          </div>
+        </aside>
+      )}
+      {tip && (
+        <div className="welcome-note glass-panel">
+          <div>
+            <span className="eyebrow">渓流と森</span>
+            <p>
+              水を流す。火を灯す。
+              <br />
+              自然に、触れてみよう。
+            </p>
+            <span className="note-sub">道具を選んで、地面に指を置く。</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="案内を閉じる"
+            onClick={() => setTip(false)}
+          >
+            <X size={18} />
+          </Button>
+        </div>
+      )}
+      <footer className="world-footer">
+        <div className="tool-context">
+          <span style={{ color: selected.color }}>
+            <selected.icon size={17} />
+            {selected.name}
+          </span>
+          <p>
+            {tool === 'look' && mode === '2d'
+              ? '2本指で移動・拡大。3Dに戻しても世界はそのまま。'
+              : selected.tip}
+          </p>
+          {tool !== 'look' && (
+            <div className="brush-size">
+              <span>広さ</span>
+              <Slider
+                aria-label="道具の広さ"
+                value={[radius]}
+                min={0.5}
+                max={3}
+                step={0.1}
+                onValueChange={(v) => setRadius(v[0])}
+              />
             </div>
-            <div>
-              <strong>3D：奥行きを使って試す</strong>
-              <p>
-                視点ツールで回転、ピンチ・ホイールでズーム。配置の高さを選んでクリック。次元・実験室の切替は新しい実験を開きます。
-              </p>
-            </div>
-            <Button variant="ghost" onClick={() => setHelp(false)}>
-              閉じる
+          )}
+        </div>
+        <div className="bottom-bar">
+          <nav
+            className="tool-palette glass-panel"
+            aria-label="自然に触れる道具"
+          >
+            {TOOLS.map(({ id, name, icon: Icon, color: toolColor }) => (
+              <Button
+                key={id}
+                variant="ghost"
+                className={`tool-button ${tool === id ? 'selected' : ''}`}
+                style={{ '--tool-color': toolColor }}
+                aria-pressed={tool === id}
+                onClick={() => {
+                  setTool(id);
+                  setTip(false);
+                }}
+              >
+                <Icon size={24} strokeWidth={1.6} />
+                <span>{name}</span>
+              </Button>
+            ))}
+          </nav>
+          <div className="time-controls glass-panel">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={paused ? '時間を進める' : '一時停止'}
+              onClick={() => setPaused((v) => !v)}
+            >
+              {paused ? (
+                <Play fill="currentColor" />
+              ) : (
+                <Pause fill="currentColor" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              className="speed-button"
+              aria-label={`時間の速さ ${speed}倍。押して切り替え`}
+              onClick={() =>
+                setSpeed((s) => (s === 1 ? 4 : s === 4 ? 0.25 : 1))
+              }
+            >
+              {speed}×
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="世界を作り直す"
+              onClick={() => reset()}
+            >
+              <RotateCcw size={19} />
             </Button>
           </div>
-        )}
-        <div className="workbench">
-          <section className="simulation-panel" aria-label={lab.title}>
-            <div className="scene-heading">
-              <div>
-                <span className="live-dot" />
-                <strong>{lab.title}</strong>
-                <span className="scene-tag">
-                  {dimension.toUpperCase()} WORLD
-                </span>
-              </div>
-              <span className="formula">{lab.formula}</span>
-            </div>
-            <div className="viewport" ref={viewport}>
-              <canvas
-                key={dimension + mode}
-                ref={canvas}
-                tabIndex={0}
-                aria-label={`${dimension} ${lab.name}の実験エリア。${tip}`}
-                onPointerDown={down}
-                onPointerMove={move}
-                onPointerUp={up}
-                onPointerCancel={() => {
-                  engine.current?.pointerUp?.();
-                  pointer.current = null;
-                }}
-                style={{
-                  cursor:
-                    tool === 'orbit'
-                      ? 'grab'
-                      : tool === 'grab' || tool === 'move'
-                        ? 'grab'
-                        : tool === 'erase'
-                          ? 'not-allowed'
-                          : 'crosshair',
-                }}
-              />
-              <div className="canvas-top">
-                <span className="dimension-label">
-                  {dimension === '2d' ? 'XY / 断面' : 'XYZ / 立体'}
-                </span>
-                <span
-                  className={'run-label ' + (playing ? 'running' : 'paused')}
-                >
-                  <i />
-                  {playing ? 'SIMULATING' : 'PAUSED'}
-                </span>
-              </div>
-              <div className="canvas-bottom">
-                <span>
-                  {dimension === '2d' ? '1 m ━━━━━' : '12 × 8 × 8 / WORLD'}
-                </span>
-                <span>
-                  {fmt(elapsed, 1)} <small>s</small>
-                </span>
-              </div>
-              {loading && (
-                <div className="canvas-message">実験室を開いています…</div>
-              )}
-              {error && (
-                <div className="canvas-message error" role="alert">
-                  {error}
-                </div>
-              )}
-              {!loading && dimension === '2d' && (
-                <div className="axis">
-                  <span>y</span>
-                  <ArrowRight />
-                  <span>x</span>
-                </div>
-              )}
-            </div>
-            <div
-              className="tool-deck"
-              role="toolbar"
-              aria-label="配置・操作ツール"
-            >
-              {tools.map(([id, name, I]) => (
-                <button
+        </div>
+        <div className="footer-meta">
+          <span>
+            <Compass size={13} />
+            32 mの小さな自然
+          </span>
+          <span>
+            {mode === '3d' ? '立体の景色' : '上から見る景色'}
+            <i />
+            {stats?.burningCells
+              ? `${stats.burningCells}か所で燃焼`
+              : '渓流と森'}
+          </span>
+        </div>
+      </footer>
+      {!ready && !error && (
+        <div className="loading-world">
+          <Mountain size={38} strokeWidth={1} />
+          <span>自然の世界をつくっています</span>
+          <div className="loading-line" />
+        </div>
+      )}
+      {error && (
+        <div role="alert" className="world-error glass-panel">
+          <Mountain />
+          <p>{error}</p>
+          <Button onClick={() => location.reload()}>もう一度開く</Button>
+        </div>
+      )}
+      <Sheet open={drawer} onOpenChange={setDrawer}>
+        <SheetContent className="nature-sheet" side="right">
+          <SheetHeader>
+            <SheetTitle>自然の設定</SheetTitle>
+            <SheetDescription>
+              太陽、風、水源を変えて、世界の変化を眺める。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="sheet-body">
+            <div className="preset-row">
+              {[
+                ['valley', '渓流と森'],
+                ['dry', '乾いた丘'],
+                ['rain', '雨の森'],
+              ].map(([id, title]) => (
+                <Button
                   key={id}
-                  className={'tool ' + (tool === id ? 'selected' : '')}
-                  aria-pressed={tool === id}
-                  onClick={() => {
-                    engine.current?.pointerUp?.();
-                    setTool(id);
-                  }}
-                  title={name}
+                  variant="outline"
+                  className={preset === id ? 'preset-active' : ''}
+                  onClick={() => reset(id)}
                 >
-                  <I />
-                  <span>{name}</span>
-                </button>
+                  {title}
+                </Button>
               ))}
             </div>
-            <div className="playback">
-              <div className="transport">
-                <Button
-                  className="play-button"
-                  onClick={() => setPlaying((p) => !p)}
-                  aria-label={playing ? '一時停止' : '再生'}
-                >
-                  {playing ? <Pause /> : <Play />}
-                  <span>{playing ? '一時停止' : '再生'}</span>
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="step-button"
-                  aria-label="1フレーム進める"
-                  title="1フレーム進める"
-                  onClick={() => {
-                    setPlaying(false);
-                    stepOnce.current = true;
-                  }}
-                >
-                  <StepForward />
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="reset-button"
-                  onClick={() => reset()}
-                  title="この実験をリセット"
-                >
-                  <RotateCcw />
-                  <span>リセット</span>
-                </Button>
-              </div>
-              <div className="speed-control">
-                <span>時間の速さ</span>
-                <Choice
-                  label="時間倍率"
-                  value={String(speed)}
-                  options={[
-                    ['0.25', '0.25×'],
-                    ['0.5', '0.5×'],
-                    ['1', '1×'],
-                    ['2', '2×'],
-                  ]}
-                  onChange={(v) => setSpeed(Number(v))}
-                />
-              </div>
-            </div>
-            <div className="interaction-hint">
-              <MousePointer2 size={14} />
-              {tip}
-            </div>
-          </section>
-          <aside className="inspector" aria-label="実験の設定">
-            <div className="inspector-title">
-              <Activity />
-              <h2>ワールド設定</h2>
-              <span>LIVE</span>
-            </div>
-            <div className="control-section">
-              <div className="section-label">実験シーン</div>
-              {dimension === '2d' ? (
-                <Choice
-                  label="実験シーン"
-                  value={preset}
-                  options={lab.presets}
-                  onChange={(p) => reset(p)}
-                />
-              ) : (
-                <div className="spatial-scene">
-                  <Layers3 size={18} />
-                  <span>3D {lab.name}シミュレーション</span>
-                </div>
-              )}
-            </div>
-            <div className="control-section parameter-section">
-              <div className="section-label">
-                物理パラメータ <span>01</span>
-              </div>
-              {mode === 'mechanics' && (
-                <>
-                  <Range
-                    label="重力"
-                    value={options.gravity}
-                    min={0}
-                    max={20}
-                    step={0.01}
-                    unit="m/s²"
-                    onChange={(v) => change('gravity', v)}
-                  />
-                  <div className="gravity-presets">
-                    {[
-                      ['無重力', 0],
-                      ['月', 1.62],
-                      ['地球', 9.81],
-                    ].map(([l, v]) => (
-                      <button
-                        key={l}
-                        className={options.gravity === v ? 'active' : ''}
-                        onClick={() => change('gravity', v)}
-                      >
-                        {l}
-                      </button>
-                    ))}
-                  </div>
-                  <Range
-                    label="反発の強さ"
-                    value={options.restitution}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => change('restitution', v)}
-                  />
-                  <Range
-                    label="摩擦"
-                    value={options.friction}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => change('friction', v)}
-                  />
-                  {dimension === '2d' && (
-                    <>
-                      <div className="field-label">追加する物体の素材</div>
-                      <Choice
-                        label="物体の素材"
-                        value={material}
-                        options={[
-                          ['rubber', 'ゴム · よく弾む'],
-                          ['wood', '木 · 標準'],
-                          ['steel', '鋼 · 重い'],
-                        ]}
-                        onChange={setMaterial}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-              {mode === 'fluid' && (
-                <>
-                  <Range
-                    label="粘性"
-                    value={options.viscosity}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(v) => change('viscosity', v)}
-                  />
-                  <div className="range-caption">
-                    <span>さらさら</span>
-                    <span>ねばねば</span>
-                  </div>
-                  <Range
-                    label="かき混ぜる強さ"
-                    value={options.force}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    onChange={(v) => change('force', v)}
-                  />
-                  <div className="micro-note">
-                    {dimension === '2d'
-                      ? 'インクは流れを見せる染料です。流体自体は、最初から槽全体を満たしています。'
-                      : '青い粒子が流体。インクツールで色付きの粒子を追加できます（最大600個）。'}
-                  </div>
-                </>
-              )}
-              {mode === 'heat' && (
-                <>
-                  <Range
-                    label="熱の伝わりやすさ"
-                    value={options.conductivity}
-                    min={0.1}
-                    max={2}
-                    step={0.1}
-                    unit="×"
-                    onChange={(v) => change('conductivity', v)}
-                  />
-                  <Range
-                    label="熱源の温度"
-                    value={options.sourceTemperature}
-                    min={30}
-                    max={120}
-                    step={1}
-                    unit="°C"
-                    onChange={(v) => change('sourceTemperature', v)}
-                  />
-                  <div className="heat-scale" />
-                  <div className="range-caption">
-                    <span>0°C 冷たい</span>
-                    <span>120°C 熱い</span>
-                  </div>
-                  <div className="micro-note">
-                    冷却源は0°C、初期温度は20°C。
-                    {dimension === '2d'
-                      ? '白い点は温度を保つ熱源・冷却源です。'
-                      : '色付きの立方体が温度。室温に近い領域は観察のため非表示です。'}
-                  </div>
-                </>
-              )}
-              {mode === 'optics' && (
-                <>
-                  <Range
-                    label="光源の角度"
-                    value={options.angle}
-                    min={-60}
-                    max={60}
-                    step={1}
-                    unit="°"
-                    onChange={(v) => change('angle', v)}
-                  />
-                  <Range
-                    label="ガラスの屈折率"
-                    value={options.refractiveIndex}
-                    min={1}
-                    max={2}
-                    step={0.01}
-                    onChange={(v) => change('refractiveIndex', v)}
-                  />
-                  <Range
-                    label="光線の束数"
-                    value={options.rayCount}
-                    min={1}
-                    max={9}
-                    step={1}
-                    onChange={(v) => change('rayCount', v)}
-                  />
-                  {dimension === '2d' && (
-                    <>
-                      <Range
-                        label="選択した鏡の角度"
-                        value={options.objectAngle}
-                        min={-90}
-                        max={90}
-                        step={1}
-                        unit="°"
-                        onChange={(v) => change('objectAngle', v)}
-                      />
-                      <Toggle
-                        label="色ごとの分散"
-                        checked={options.dispersion}
-                        onChange={(v) => change('dispersion', v)}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-              {dimension === '3d' && (
-                <Range
-                  label="配置する高さ"
-                  value={height}
-                  min={0.4}
-                  max={7.2}
-                  step={0.1}
-                  unit="m"
-                  onChange={setHeight}
-                />
-              )}
-            </div>
-            <div className="control-section">
-              <div className="section-label">
-                見え方 <span>02</span>
-              </div>
-              <Toggle
-                label="座標グリッド"
-                checked={visual.grid}
-                onChange={(v) => setVisual((s) => ({ ...s, grid: v }))}
+            <div className="setting-section">
+              <h3>
+                <Sun size={18} />
+                太陽
+              </h3>
+              <RangeControl
+                label="時刻"
+                value={settings.hour}
+                min={0}
+                max={23.75}
+                step={0.25}
+                unit="時"
+                onChange={(v) => updateSetting('hour', v)}
               />
-              {dimension === '2d' && ['mechanics', 'fluid'].includes(mode) && (
-                <Toggle
-                  label="速度ベクトル"
-                  checked={visual.vectors}
-                  onChange={(v) => setVisual((s) => ({ ...s, vectors: v }))}
-                />
-              )}
+              <RangeControl
+                label="日差し"
+                value={settings.sunPower}
+                min={0}
+                max={1.5}
+                step={0.1}
+                unit="倍"
+                onChange={(v) => updateSetting('sunPower', v)}
+              />
             </div>
-            <div className={'mission ' + (complete ? 'complete' : '')}>
-              <div className="mission-label">
-                {complete ? <Check size={16} /> : <ArrowUpRight size={16} />}{' '}
-                {complete ? '実験達成！' : 'MINI CHALLENGE'}
+            <div className="setting-section">
+              <h3>
+                <Wind size={18} />
+                空気と雨
+              </h3>
+              <RangeControl
+                label="風の強さ"
+                value={settings.wind}
+                min={0}
+                max={12}
+                step={0.5}
+                unit=" m/s"
+                onChange={(v) => updateSetting('wind', v)}
+              />
+              <RangeControl
+                label="風の向き"
+                value={settings.windAngle}
+                min={0}
+                max={360}
+                step={15}
+                unit="°"
+                onChange={(v) => updateSetting('windAngle', v)}
+              />
+              <RangeControl
+                label="雨の強さ"
+                value={settings.rain}
+                min={0}
+                max={100}
+                step={5}
+                unit=" mm/h"
+                onChange={(v) => updateSetting('rain', v)}
+              />
+            </div>
+            <div className="setting-section">
+              <h3>
+                <Droplets size={18} />
+                水源
+              </h3>
+              <RangeControl
+                label="湧き水の量"
+                value={settings.spring}
+                min={0}
+                max={4}
+                step={0.25}
+                unit="倍"
+                onChange={(v) => updateSetting('spring', v)}
+              />
+            </div>
+            <label className="setting-switch" htmlFor="thermal-switch">
+              <span>
+                <Thermometer size={18} />
+                地表の温度を色で見る
+              </span>
+              <Switch
+                id="thermal-switch"
+                checked={thermal}
+                onCheckedChange={setThermal}
+              />
+            </label>
+            <div className="world-readings">
+              <div>
+                <span>世界の水</span>
+                <strong>{(stats?.waterVolume || 0).toFixed(1)} m³</strong>
               </div>
-              <p>{mission}</p>
-              {mode === 'mechanics' &&
-                dimension === '2d' &&
-                preset !== 'challenge' && (
-                  <button onClick={() => reset('challenge')}>
-                    挑戦する <ArrowRight size={14} />
-                  </button>
-                )}
+              <div>
+                <span>蒸発した水</span>
+                <strong>
+                  {((stats?.evaporatedVolume || 0) * 1000).toFixed(1)} L
+                </strong>
+              </div>
+              <div>
+                <span>燃えた草木</span>
+                <strong>{(stats?.burnedMass || 0).toFixed(1)} kg</strong>
+              </div>
             </div>
-          </aside>
-        </div>
-        <div className="observation-bar">
-          <div className="observation-label">
-            <Icon />
-            <span>
-              観測データ<small>REALTIME DATA</small>
-            </span>
           </div>
-          {mode === 'mechanics' ? (
-            <>
-              <Metric label="物体数" value={metrics.objects ?? '—'} unit="個" />
-              <Metric
-                label="力学的エネルギー*"
-                value={fmt(metrics.energy, 1)}
-                unit="J"
-              />
-              {dimension === '2d' && (
-                <Metric
-                  label="最大速度"
-                  value={fmt(metrics.speed, 2)}
-                  unit="m/s"
-                />
-              )}
-            </>
-          ) : mode === 'fluid' ? (
-            <>
-              <Metric
-                label={dimension === '2d' ? '平均インク濃度' : '流体の粒子数'}
-                value={
-                  dimension === '2d'
-                    ? fmt(metrics.dye * 100, 1)
-                    : (metrics.particles ?? '—')
-                }
-                unit={dimension === '2d' ? '%' : '個'}
-              />
-              <Metric
-                label={dimension === '2d' ? '流れの強さ' : '障害物'}
-                value={
-                  dimension === '2d'
-                    ? fmt(metrics.motion, 2)
-                    : (metrics.obstacles ?? 0)
-                }
-                unit={dimension === '2d' ? '相対値' : '個'}
-              />
-            </>
-          ) : mode === 'heat' ? (
-            <>
-              <Metric label="平均温度" value={fmt(metrics.average)} unit="°C" />
-              <Metric label="最低温度" value={fmt(metrics.min)} unit="°C" />
-              <Metric label="最高温度" value={fmt(metrics.max)} unit="°C" />
-            </>
-          ) : (
-            <>
-              <Metric label="光線の数" value={metrics.rays ?? '—'} unit="本" />
-              <Metric label="反射" value={metrics.reflections ?? 0} unit="回" />
-              <Metric label="屈折" value={metrics.refractions ?? 0} unit="回" />
-            </>
-          )}
-          <div className="fps">
-            <i />
-            {fps} <span>FPS</span>
-          </div>
-        </div>
-        <div className="lab-note">
-          <div>
-            <span className="note-icon">
-              <Lightbulb size={18} />
-            </span>
-            <p>{lab.tip}</p>
-          </div>
-          <details>
-            <summary>このシミュレーションについて</summary>
+        </SheetContent>
+      </Sheet>
+      <Sheet open={help} onOpenChange={setHelp}>
+        <SheetContent className="nature-sheet" side="right">
+          <SheetHeader>
+            <SheetTitle>自然に触れる</SheetTitle>
+            <SheetDescription>
+              水と火と太陽は、同じ地面の上で作用します。
+            </SheetDescription>
+          </SheetHeader>
+          <div className="sheet-body help-body">
             <p>
-              {lab.description} 各実験室は独立したモデルです。
-              {mode === 'mechanics'
-                ? ' *並進の運動エネルギーと重力位置エネルギーの概算。回転分を含みません。'
-                : ''}
+              <Hand />
+              「見わたす」で1本指を動かすと回転。2本指で移動し、指を広げると拡大します。道具を選ぶと、1本指で地面に作用します。
             </p>
             <p>
-              2Dは断面全体を見渡せる操作性と計算効率、3Dは奥行きのある配置と観察を優先しています。
+              <Droplets />
+              川を土でせき止め、横に溝を掘ってみる。水は高い水面から低い方へ流れ、新しい道を探します。
             </p>
-          </details>
-        </div>
-      </main>
-      <footer>
-        <span>
-          PHYSICA <span className="footer-dot">/</span> OPEN EXPERIMENT WORLD
-        </span>
-        <span>
-          触れて、変えて、発見しよう。 <span className="footer-dot">↗</span>
-        </span>
-      </footer>
-    </div>
-  );
-}
-function Metric({ label, value, unit }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <div>
-        {value}
-        <small>{unit}</small>
-      </div>
-    </div>
+            <p>
+              <Flame />
+              乾いた草地に火をつける。燃える草木から出た熱が周囲を温めます。水を注ぐと濡れて冷え、火が消えます。
+            </p>
+            <p>
+              <Sun />
+              夕方や夜へ時刻を変える。日差しと地形の影が移り、日射で受け取る熱が変わります。火は夜も周囲を照らします。
+            </p>
+            <p>
+              <Layers3 />
+              2Dは真上から、3Dは自由な角度から。同じ地形、水、温度、草木を見ているので切り替えても進行は続きます。
+            </p>
+            <div className="model-note">
+              <strong>この世界の再現範囲</strong>
+              <p>
+                地形上の水の流れ、草木の燃焼と熱放射、日射・地形の影、冷却・蒸発を数値近似しています。水は深さで表すため、空中の滝や砕ける波は扱いません。煙や細かな水面の波は流れ・熱・風に応じた描画で、空気全体の流体計算ではありません。生態系や雲の生成も未対応です。
+              </p>
+              <p>
+                2D・3Dで同じ自然を操作でき、タブレットでも世界を継続して動かせる方式を選んでいます。
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setHelp(false);
+                setTool('water');
+                setTip(false);
+              }}
+            >
+              水を流してみる
+              <ChevronRight size={17} />
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </main>
   );
 }

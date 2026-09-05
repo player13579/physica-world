@@ -1,5 +1,43 @@
 {
-  "scope": "Technical-only 2D and 3D simulation geometry and scientific field visualization",
+  "scope": "same landscape nature interactions, tablet 2D/3D",
+  "decision": "code-native procedural exception applies",
+  "reason": "The requested visuals are dynamic physical state rendered from live simulation fields. Three.js terrain/tree geometry, procedural water shading, flame/smoke fields, lighting and shadows are the semantically correct assets; no raster generation was requested.",
+  "states": {
+    "water": {
+      "meaning": "depth and flow in the terrain channel/pond",
+      "mapping": "terrain heightfield plus live water surface; flow velocity drives direction, foam and ripples; zero depth exposes ground",
+      "2d": "Same water surface and simulation seen through an orthographic overhead camera; no separate vector-field lab.",
+      "3d": "heightfield water surface with depth-aware color, directional flow and contact foam",
+      "must_not_use": "static water bitmap or decorative blue overlay"
+    },
+    "fire": {
+      "meaning": "active combustion rate and thermal field",
+      "mapping": "flame/smoke field driven by fire, fuel, temperature and wind; burned fuel removes canopy/vegetation; radiation heats neighbors",
+      "2d": "cell flame intensity, heat glow and smoke direction from same simulation",
+      "3d": "Procedural billboard flame columns and wind-advected smoke particles anchored to actual burning cells; not a volumetric gas solver.",
+      "must_not_use": "unlinked particle loop or icon that persists after fuel/water suppression"
+    },
+    "sunlight": {
+      "meaning": "incident solar irradiance after slope and terrain occlusion",
+      "mapping": "sun angle plus cached horizon shadow controls lighting, sunlight field and heating; tree/terrain shadows remain in the same world",
+      "2d": "Same sun/terrain/canopy shadows and optional measured-temperature colors as 3D.",
+      "3d": "HDR sky/sun direction and real-time/cached terrain shadows",
+      "must_not_use": "uniform brightness unrelated to hour, slope or occlusion",
+      "thermal_coupling": "Environment hands canopy position, radius, height and opacity to solar occlusion; fuel loss removes canopy shade."
+    },
+    "coupled_events": {
+      "rain_or_brush_water": "adds water, advects heat, wets fuel and suppresses fire",
+      "fire_spread": "consumes fuel, emits heat/radiation, is reduced by wetness and standing water",
+      "terrain_edit": "changes elevation, redirects flow and changes horizon shadows",
+      "tablet_2d_3d": "both projections sample the identical world arrays and interaction coordinates"
+    }
+  },
+  "asset_requirements": {
+    "dedicated_raster": false,
+    "procedural_geometry": true,
+    "source_traceability": "code-native renderer and simulation fields are the source of truth",
+    "generation_authorization": "absent; do not invoke image generation"
+  },
   "b_rules": {
     "repository": "player13579/B",
     "branch": "Codex-honoo",
@@ -10,25 +48,16 @@
     "decision": "Technical-only exception. No content-generative raster assets requested or required. Scientific fields, collision geometry, vector rays and UI icons are code-native.",
     "activated_extensions": []
   },
-  "semantic_mappings": {
-    "rigid_bodies": "Collider vertices/radii and simulated quaternion/position. Wood hatching, steel highlight and rubber ring indicate the material choice.",
-    "constraints": "Actual endpoints of mechanics constraints",
-    "grid": "Coordinates and floor geometry, optional",
-    "velocity_vectors": "Actual mechanics velocity or grid flow vector",
-    "fluid_2d": "Cyan intensity is actual scalar dye concentration",
-    "fluid_3d": "Each sphere represents a simulated XYZ fluid particle. Pink indicates added dye particles.",
-    "thermal": "Shared temperature color scale 0–120 Celsius; 3D ambient cells hidden for inspection",
-    "optics": "Ray segments from actual boundary intersections and reflection/refraction calculations",
-    "goal": "Marked target ball, goal region, and actual completion flag",
-    "ui": "Lucide functional icons, text and controls"
+  "verification": {
+    "numerical": "Conservation, advection, radiation, wet suppression, terrain/canopy solar occlusion, long-run bounds; final results in publication record",
+    "geometry": "CPU Three.js instancing, trunk dimensions, perimeter triangles, flooding response and disposal",
+    "browser": "No browser/GPU visual QA or tablet hardware testing performed; no successful browser inventory from earlier phase",
+    "delivery": "Static GitHub Pages; final build and remote commit/asset hashes verified at release"
   },
-  "raster_generation": "Not performed; no image generation request",
-  "browser_verification": "Unavailable: browser inventory timed out twice; no browser tabs created. SSR markup and HTTP compilation checked instead. No visual QA claim.",
-  "webmcp": "Optional feature-detected read_physics_world and set_physics_parameters tools. Supported live validation context unavailable, not claimed verified.",
-  "hosting": "User explicitly chose public GitHub Pages. Static build used instead of Sites hosting. No Sites project created.",
-  "model_contribution_basis": {
-    "frontier": "Product direction, UI, Canvas/Three rendering, integration corrections, independent validation and GitHub publication",
-    "balanced": "Four 2D solvers, 3D solver foundation, numerical tests and bounded implementation reviews",
-    "efficient": "Current B-rule audit, visual semantic mapping and model-catalog identification"
+  "runtime": {
+    "terrain": "src/engines/nature-engine.js -> src/render/nature-view.js",
+    "vegetation": "src/render/nature-environment.js",
+    "tablet_ui": "app/page.jsx + app/globals.css",
+    "raster_assets": []
   }
 }
