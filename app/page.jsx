@@ -143,7 +143,7 @@ export default function NatureWorld() {
     [error, setError] = useState('');
   const [mode, setMode] = useState('3d'),
     [tool, setTool] = useState('look'),
-    [radius, setRadius] = useState(1.2);
+    [radius, setRadius] = useState(0.6);
   const [paused, setPaused] = useState(false),
     [speed, setSpeed] = useState(1),
     [thermal, setThermal] = useState(false);
@@ -166,7 +166,12 @@ export default function NatureWorld() {
     let cancelled = false,
       raf = 0,
       view = null;
-    const world = createNatureWorld({ n: 80, size: 32, seed: 714 });
+    const world = createNatureWorld({
+      n: 128,
+      size: 12,
+      seed: 714,
+      landscape: 'creek',
+    });
     engineRef.current = world;
     let last = 0,
       accumulator = 0,
@@ -180,7 +185,10 @@ export default function NatureWorld() {
             onSample: (value) => {
               lastSample = value;
             },
-            onError: setError,
+            onError: (message) => {
+              setError(message);
+              setPaused(true);
+            },
           });
           viewRef.current = view;
           setSettings({ ...world.settings });
@@ -498,8 +506,8 @@ export default function NatureWorld() {
               <Slider
                 aria-label="道具の広さ"
                 value={[radius]}
-                min={0.5}
-                max={3}
+                min={0.2}
+                max={1.5}
                 step={0.1}
                 onValueChange={(v) => setRadius(v[0])}
               />
@@ -564,7 +572,7 @@ export default function NatureWorld() {
         <div className="footer-meta">
           <span>
             <Compass size={13} />
-            32 mの小さな自然
+            12 mの渓流と森
           </span>
           <span>
             {mode === '3d' ? '立体の景色' : '上から見る景色'}

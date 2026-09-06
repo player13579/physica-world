@@ -41,6 +41,25 @@ function riverCenter(z) {
   return 1.8 * Math.sin((z + 5) * 0.19) + 0.55 * Math.sin((z - 2) * 0.47);
 }
 
+export function creekCenter(z) {
+  return 0.52 * Math.sin((z + 1.5) * 0.55) + 0.16 * Math.sin((z - 0.3) * 1.35);
+}
+
+export function creekTerrainHeight(x, z, size = 12) {
+  const lateral = x - creekCenter(z);
+  return (
+    0.72 -
+    0.035 * (z + size / 2) -
+    0.15 * Math.exp(-((lateral / 0.52) ** 2)) +
+    0.1 * smoothstep(0.42, 1.15, Math.abs(lateral)) +
+    0.018 * Math.min(lateral * lateral, 9) +
+    0.22 * (Math.abs(x) / (size / 2)) ** 3 +
+    0.035 * Math.sin(1.7 * x + 0.5 * z) * Math.sin(1.1 * z) +
+    0.018 * Math.sin(3.1 * x - 1.9 * z) -
+    0.09 * Math.exp(-((lateral / 0.72) ** 2) - ((z - 2.7) / 1.15) ** 2)
+  );
+}
+
 export function terrainHeight(x, z, size = 32) {
   const half = size * 0.5;
   const scale = size / 32;
@@ -80,7 +99,12 @@ function hash01(x, z, seed) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
 }
 
-export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
+export function createNatureWorld({
+  n = 80,
+  size = 32,
+  seed = 714,
+  landscape = 'valley',
+} = {}) {
   n = clamp(Math.round(Number.isFinite(n) ? n : 80), 8, 192);
   size = clamp(Number.isFinite(size) ? size : 32, 8, 96);
   seed = (Number.isFinite(seed) ? seed : 714) | 0;
@@ -89,6 +113,54 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
   const dx = size / (n - 1);
   const cellArea = dx * dx;
   const half = size * 0.5;
+  const compactCreek = landscape === 'creek';
+  const centerAt = (z) =>
+    compactCreek ? creekCenter(z) : (riverCenter((z * 32) / size) * size) / 32;
+  const radiationRadius = compactCreek ? 1.2 : 2.4;
+  const maxRadiationOffset = compactCreek
+    ? Math.ceil(radiationRadius / dx)
+    : Math.min(5, Math.ceil(radiationRadius / dx));
+  const radiationOffsets = [];
+  for (let oz = -maxRadiationOffset; oz <= maxRadiationOffset; oz++) {
+    for (let ox = -maxRadiationOffset; ox <= maxRadiationOffset; ox++) {
+      const distance = Math.hypot(ox * dx, oz * dx);
+      if (!distance || distance > radiationRadius) continue;
+      radiationOffsets.push({
+        ox,
+        oz,
+        view: Math.min(
+          0.34,
+          cellArea / (2 * Math.PI * distance * distance) +
+            0.14 * Math.exp(-distance / 1.2),
+        ),
+      });
+    }
+  }
+  const radiationTargets = new Int32Array(radiationOffsets.length);
+  const radiationWeights = new Float64Array(radiationOffsets.length);
+  const emitterIndices = new Int32Array(count),
+    emitterPowers = new Float64Array(count);
+  const springStencil = [];
+  if (compactCreek) {
+    const z0 = -half + 0.4,
+      x0 = centerAt(z0),
+      radius = 0.34;
+    let weightSum = 0;
+    for (let iz = 0; iz < n; iz++)
+      for (let ix = 0; ix < n; ix++) {
+        const distance = Math.hypot(-half + ix * dx - x0, -half + iz * dx - z0);
+        if (distance >= radius) continue;
+        const weight = (1 - distance / radius) ** 2;
+        springStencil.push({ index: iz * n + ix, weight });
+        weightSum += weight;
+      }
+    if (!weightSum)
+      springStencil.push({
+        index: Math.round((x0 + half) / dx) + n * Math.round((z0 + half) / dx),
+        weight: 1,
+      });
+    else springStencil.forEach((entry) => (entry.weight /= weightSum));
+  }
   const height = new Float32Array(count);
   const water = new Float32Array(count);
   const temperature = new Float32Array(count);
@@ -147,6 +219,7 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
   const world = {
     n,
     size,
+    landscape: compactCreek ? 'creek' : 'valley',
     dx,
     time: 0,
     revision: 0,
@@ -397,6 +470,15 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
 
     const springMultiplier = clamp(Number(settings.spring) || 0, 0, 4);
     if (springMultiplier <= 0) return;
+    if (compactCreek) {
+      const volume = 0.012 * springMultiplier * dt;
+      for (const { index, weight } of springStencil) {
+        addWaterAt(index, (volume * weight) / cellArea, ambient - 4, null);
+        moisture[index] = Math.max(moisture[index], 0.92);
+      }
+      counters.inflowVolume += volume;
+      return;
+    }
     const targetZ = -half + dx * 1.5;
     const targetX = (riverCenter((targetZ * 32) / size) * size) / 32;
     const gx = clamp(Math.round((targetX + half) / dx), 1, n - 2);
@@ -555,7 +637,7 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
   function updateCombustionAndRadiation(dt) {
     radiantPower.fill(0);
     currentFirePower = 0;
-    const emitters = [];
+    let emitterCount = 0;
     for (let i = 0; i < count; i++) {
       const standingSuppression = Math.exp(-water[i] / 0.006);
       const dry =
@@ -575,42 +657,34 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
       counters.burnedMass += consumed * cellArea;
       const power = (consumed * cellArea * FUEL_HEAT) / dt;
       currentFirePower += power;
-      if (power > 1) emitters.push([i, power]);
+      if (power > 1) {
+        emitterIndices[emitterCount] = i;
+        emitterPowers[emitterCount++] = power;
+      }
     }
 
-    const maxOffset = Math.min(5, Math.ceil(2.4 / dx));
-    for (const [source, chemicalPower] of emitters) {
+    for (let emitter = 0; emitter < emitterCount; emitter++) {
+      const source = emitterIndices[emitter],
+        chemicalPower = emitterPowers[emitter];
       const sx = source % n;
       const sz = (source / n) | 0;
-      const targets = [];
+      let targetCount = 0;
       let factorSum = 0;
-      for (let oz = -maxOffset; oz <= maxOffset; oz++) {
-        const z = sz + oz;
-        if (z < 0 || z >= n) continue;
-        for (let ox = -maxOffset; ox <= maxOffset; ox++) {
-          const x = sx + ox;
-          if (x < 0 || x >= n || (ox === 0 && oz === 0)) continue;
-          const distance = Math.hypot(ox * dx, oz * dx);
-          if (distance > 2.4) continue;
-          const target = z * n + x;
-          // The exponential term represents the vertical flame face, which a flat
-          // ground-cell solid angle alone would miss at short range.
-          const view =
-            Math.min(
-              0.34,
-              cellArea / (2 * Math.PI * distance * distance) +
-                0.14 * Math.exp(-distance / 1.2),
-            ) * lineOfSightFactor(source, target);
-          if (view > 0) {
-            targets.push([target, view]);
-            factorSum += view;
-          }
-        }
+      for (const offset of radiationOffsets) {
+        const x = sx + offset.ox,
+          z = sz + offset.oz;
+        if (x < 0 || x >= n || z < 0 || z >= n) continue;
+        const target = z * n + x;
+        const view = offset.view * lineOfSightFactor(source, target);
+        radiationTargets[targetCount] = target;
+        radiationWeights[targetCount++] = view;
+        factorSum += view;
       }
       const normalization = factorSum > 0.8 ? 0.8 / factorSum : 1;
       const radiated = chemicalPower * 0.32;
-      for (const [target, view] of targets)
-        radiantPower[target] += radiated * view * normalization;
+      for (let j = 0; j < targetCount; j++)
+        radiantPower[radiationTargets[j]] +=
+          radiated * radiationWeights[j] * normalization;
     }
   }
 
@@ -718,7 +792,21 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
     addSources(dt);
     updateCombustionAndRadiation(dt);
     updateThermalAndFire(dt);
-    updateWater(dt);
+    // Hydraulic stability depends on grid spacing; heat/fire retain their own
+    // outer cadence. Subcycle transport, preserving its volume/heat flux pair.
+    let remaining = dt;
+    while (remaining > 1e-9) {
+      let signal = 0.8;
+      for (let i = 0; i < count; i++)
+        if (water[i] > 1e-6)
+          signal = Math.max(
+            signal,
+            Math.hypot(flowX[i], flowZ[i]) + Math.sqrt(G * water[i]),
+          );
+      const h = Math.min(remaining, 0.04, (0.65 * dx) / signal);
+      updateWater(h);
+      remaining -= h;
+    }
     world.time += dt;
   }
 
@@ -760,14 +848,14 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
         if (tool === 'water') {
           addWaterAt(
             i,
-            0.09 * strength * falloff,
+            (compactCreek ? 0.04 : 0.09) * strength * falloff,
             settings.ambient - 2,
             'userAddedVolume',
           );
         } else if (tool === 'rain') {
           addWaterAt(
             i,
-            0.025 * strength * falloff,
+            (compactCreek ? 0.012 : 0.025) * strength * falloff,
             settings.ambient - 2,
             'rainVolume',
           );
@@ -788,16 +876,16 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
           }
           fire[i] = Math.max(fire[i], clamp(0.92 * strength * falloff, 0, 1));
         } else if (tool === 'raise') {
-          height[i] += 0.42 * strength * falloff;
+          height[i] += (compactCreek ? 0.12 : 0.42) * strength * falloff;
           terrainChanged = true;
         } else if (tool === 'lower') {
-          height[i] -= 0.42 * strength * falloff;
+          height[i] -= (compactCreek ? 0.12 : 0.42) * strength * falloff;
           terrainChanged = true;
         } else if (tool === 'plant') {
           fuel[i] = clamp(fuel[i] + 1.25 * strength * falloff, 0, 3);
           moisture[i] = Math.max(moisture[i], 0.28 * falloff);
         } else if (tool === 'rock') {
-          height[i] += 0.8 * strength * falloff;
+          height[i] += (compactCreek ? 0.22 : 0.8) * strength * falloff;
           fuel[i] = 0;
           fire[i] = 0;
           terrainChanged = true;
@@ -846,14 +934,20 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
     for (let iz = 0; iz < n; iz++) {
       const z = coordinate(iz);
       const zn = (z * 32) / size;
-      const channelX = (riverCenter(zn) * size) / 32;
+      const channelX = centerAt(z);
       for (let ix = 0; ix < n; ix++) {
         const x = coordinate(ix);
         const i = iz * n + ix;
         const lateral = Math.abs(x - channelX);
-        height[i] = terrainHeight(x, z, size);
-        const noise = hash01(ix, iz, seed);
-        const riverDepth =
+        height[i] = compactCreek
+          ? creekTerrainHeight(x, z, size)
+          : terrainHeight(x, z, size);
+        const noise = compactCreek
+          ? 0.5 +
+            0.25 * Math.sin(x * 2.7 + z * 1.8) +
+            0.25 * Math.cos(x * 4.1 - z * 2.3)
+          : hash01(ix, iz, seed);
+        let riverDepth =
           preset === 'dry'
             ? 0
             : Math.max(
@@ -864,8 +958,16 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
           (x - channelX) / ((3.1 * size) / 32),
           (zn - 8) / 3.2,
         );
-        const pondDepth =
+        let pondDepth =
           preset === 'dry' ? 0 : Math.max(0, 0.34 * (1 - pondRadius));
+        if (compactCreek && preset !== 'dry') {
+          const halfWidth = 0.72 + 0.12 * (0.5 + 0.5 * Math.sin(0.8 * z));
+          riverDepth = Math.max(0, 0.1 * (1 - (lateral / halfWidth) ** 2));
+          pondDepth = Math.max(
+            0,
+            0.16 * (1 - Math.hypot(lateral, (z - 2.7) / 1.35)),
+          );
+        }
         water[i] =
           Math.max(riverDepth, pondDepth) * (preset === 'rain' ? 1.35 : 1);
         temperature[i] =
@@ -874,7 +976,10 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
           0.45 * height[i] +
           0.8 * (noise - 0.5);
         waterTemperature[i] = settings.ambient - 3;
-        const nearRiver = Math.exp(-(lateral * lateral) / (2 * 2.1 * 2.1));
+        const wetBand = compactCreek ? 0.9 : 2.1;
+        const nearRiver = Math.exp(
+          -(lateral * lateral) / (2 * wetBand * wetBand),
+        );
         moisture[i] = clamp(
           (preset === 'dry' ? 0.08 : preset === 'rain' ? 0.78 : 0.24) +
             0.58 * nearRiver +
@@ -894,7 +999,7 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
       }
     }
 
-    if (preset !== 'rain') {
+    if (preset !== 'rain' && (!compactCreek || preset === 'dry')) {
       let best = -1;
       let bestDistance = Infinity;
       for (let iz = 0; iz < n; iz++) {
@@ -902,7 +1007,8 @@ export function createNatureWorld({ n = 80, size = 32, seed = 714 } = {}) {
           const i = iz * n + ix;
           if (water[i] > 0.005) continue;
           const distance =
-            (coordinate(ix) - 4) ** 2 + (coordinate(iz) - 3) ** 2;
+            (coordinate(ix) - (compactCreek ? size * 0.125 : 4)) ** 2 +
+            (coordinate(iz) - (compactCreek ? size * 0.094 : 3)) ** 2;
           if (distance < bestDistance) {
             bestDistance = distance;
             best = i;

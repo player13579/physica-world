@@ -4,9 +4,39 @@ import * as THREE from 'three';
 import { createNatureWorld } from '../src/engines/nature-engine.js';
 import { createEnvironment } from '../src/render/nature-environment.js';
 
+test('wind alone does not upload unchanged vegetation, but burning still updates it', () => {
+  const scene = new THREE.Scene();
+  const world = createNatureWorld({ n: 32, size: 12, landscape: 'creek' });
+  const environment = createEnvironment(scene, world);
+  try {
+    const grass = scene.getObjectByName('wind-grass');
+    const before = [grass.instanceMatrix.version, grass.instanceColor.version];
+    environment.update(1, { wind: 6 });
+    assert.deepEqual(
+      [grass.instanceMatrix.version, grass.instanceColor.version],
+      before,
+    );
+    world.fuel.fill(0);
+    environment.update(2, { wind: 6 });
+    assert.ok(grass.instanceMatrix.version > before[0]);
+    assert.ok(grass.instanceColor.version > before[1]);
+    const burned = [grass.instanceMatrix.version, grass.instanceColor.version];
+    environment.update(3, { wind: 1 });
+    assert.deepEqual(
+      [grass.instanceMatrix.version, grass.instanceColor.version],
+      burned,
+    );
+  } finally {
+    environment.dispose();
+  }
+});
+
 test('environment color channels have actual backing data for every rendered mesh', () => {
   const scene = new THREE.Scene();
-  const environment = createEnvironment(scene, createNatureWorld({ n: 32 }));
+  const environment = createEnvironment(
+    scene,
+    createNatureWorld({ n: 32, size: 12, landscape: 'creek' }),
+  );
   let tintedBatches = 0;
   try {
     scene.traverse((object) => {
@@ -34,22 +64,25 @@ test('environment color channels have actual backing data for every rendered mes
       );
       assert.ok(object.instanceColor.count >= object.count);
       assert.ok(object.instanceColor.array.every(Number.isFinite));
-      const palette = object.instanceColor.array;
-      assert.ok(
-        palette.some(
+      const chromatic = (palette) =>
+        palette?.some(
           (value, i) =>
             i % 3 === 0 &&
             Math.max(value, palette[i + 1], palette[i + 2]) -
               Math.min(value, palette[i + 1], palette[i + 2]) >
               0.02,
-        ),
+        );
+      assert.ok(
+        chromatic(object.instanceColor.array) ||
+          (materials.some((m) => m.vertexColors) &&
+            chromatic(object.geometry.getAttribute('color')?.array)),
         `${object.name}: its natural palette contains chromatic colors`,
       );
       tintedBatches++;
     });
     assert.ok(
       tintedBatches >= 10,
-      'trees, grass, reeds and rocks all exercise the color contract',
+      'tree variants, grass, ferns and dry/wet stones all exercise the color contract',
     );
   } finally {
     environment.dispose();
@@ -57,17 +90,29 @@ test('environment color channels have actual backing data for every rendered mes
 });
 
 test('forest geometry stays finite, boundary walls stay on the perimeter, disposal releases the scene', () => {
-  const w = createNatureWorld({ n: 32 });
+  const w = createNatureWorld({ n: 32, size: 12, landscape: 'creek' });
   const scene = new THREE.Scene();
   const environment = createEnvironment(scene, w);
-  const trunk = scene.getObjectByName('tree-trunks');
-  assert.ok(trunk.count > 50, 'a populated natural forest is present');
-  assert.equal(
-    trunk.geometry.parameters.height,
-    1,
-    'instance scale supplies the trunk height',
+  const trunks = [0, 1, 2].map((v) =>
+    scene.getObjectByName(`tree-trunks-${v}`),
   );
-  assert.ok(trunk.geometry.parameters.radialSegments >= 6);
+  assert.ok(
+    trunks.reduce((sum, mesh) => sum + mesh.count, 0) >= 12,
+    'the compact creek has a surrounding grove',
+  );
+  assert.ok(
+    trunks[0].geometry.attributes.position.count > 1000,
+    'connected branch geometry replaces a primitive trunk',
+  );
+  assert.ok(
+    scene.getObjectByName('tree-leaves-0').geometry.attributes.position.count >
+      2000,
+    'individual folded leaves form the canopy',
+  );
+  assert.ok(
+    scene.getObjectByName('wind-grass').count > 8000,
+    'dense individual grass blades cover the banks',
+  );
   let walls = 0;
   scene.traverse((object) => {
     if (object.isInstancedMesh)
@@ -79,7 +124,7 @@ test('forest geometry stays finite, boundary walls stay on the perimeter, dispos
     for (let i = 0; i < indices.length; i += 3) {
       const ids = [indices[i], indices[i + 1], indices[i + 2]];
       const edge = ['getX', 'getZ'].some((axis) =>
-        [-16, 16].some((bound) =>
+        [-w.size / 2, w.size / 2].some((bound) =>
           ids.every((j) => Math.abs(p[axis](j) - bound) < 1e-5),
         ),
       );

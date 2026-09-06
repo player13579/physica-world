@@ -51,12 +51,12 @@
   "verification": {
     "numerical": "Conservation, advection, radiation, wet suppression, terrain/canopy solar occlusion, long-run bounds; final results in publication record",
     "geometry": "CPU Three.js instancing, trunk dimensions, perimeter triangles, flooding response and disposal",
-    "browser": "No browser/GPU visual QA or tablet hardware testing performed; no successful browser inventory from earlier phase",
+    "browser": "Actual Chrome WebGL screenshots inspected in 3D and 2D, including close-up detail, water/fire interaction, night illumination and 1024x768 / 768x1024 CSS viewport fixtures. Hardware iOS remains unverified. Current acceptance and development-context-loss limitations: audits/compact-nature.md.",
     "delivery": "Static GitHub Pages; final build and remote commit/asset hashes verified at release"
   },
   "runtime": {
     "terrain": "src/engines/nature-engine.js -> src/render/nature-view.js",
-    "vegetation": "src/render/nature-environment.js",
+    "vegetation": "src/render/foliage-models.js -> src/render/nature-environment.js: individual folded leaves, curved grass, arching fern leaflets, state-driven instance updates",
     "tablet_ui": "app/page.jsx + app/globals.css",
     "raster_assets": []
   }

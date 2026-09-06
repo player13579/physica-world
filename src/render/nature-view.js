@@ -36,29 +36,42 @@ export function createNatureView(
       'この端末で水や炎を描画できませんでした。ブラウザを更新して再度開いてください。',
     );
   };
-  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2.5));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.95;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
+  const { n, size } = world;
+  const extent = size * 0.5;
+  const home = new THREE.Vector3(size * 0.65, size * 0.68, size * 0.82);
+  const focus = new THREE.Vector3(0, 0.35, -size * 0.035);
   // The atmospheric Sky capture is HDR radiance, not a unit-strength ambient
   // light. Balance indirect illumination against the explicit sun light.
   scene.environmentIntensity = 0.08;
   scene.background = new THREE.Color(0xaecbd3);
   scene.fog = new THREE.FogExp2(0xaecbd3, 0.009);
   const perspective = new THREE.PerspectiveCamera(42, 1, 0.1, 1800);
-  const ortho = new THREE.OrthographicCamera(-23, 23, 23, -23, 0.1, 1800);
-  perspective.position.set(32, 29, 37);
-  ortho.position.set(0, 70, 0.001);
+  const ortho = new THREE.OrthographicCamera(
+    -extent,
+    extent,
+    extent,
+    -extent,
+    0.1,
+    1800,
+  );
+  perspective.position.copy(home);
+  ortho.position.set(0, size * 2.2, 0.001);
   let camera = perspective;
   const controls = new OrbitControls(camera, canvas);
-  controls.target.set(0, 1.5, 0);
+  controls.target.copy(focus);
   controls.enableDamping = true;
   controls.dampingFactor = 0.09;
-  controls.minDistance = 9;
-  controls.maxDistance = 85;
+  controls.minDistance = size * 0.16;
+  controls.maxDistance = size * 2.4;
+  controls.minZoom = 0.7;
+  controls.maxZoom = 5;
   controls.maxPolarAngle = Math.PI * 0.47;
   controls.minPolarAngle = 0.15;
   controls.screenSpacePanning = true;
@@ -77,19 +90,19 @@ export function createNatureView(
   scene.add(hemisphere);
   const sun = new THREE.DirectionalLight(0xfff0d0, 3.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(4096, 4096);
   Object.assign(sun.shadow.camera, {
-    left: -23,
-    right: 23,
-    top: 23,
-    bottom: -23,
+    left: -size * 0.7,
+    right: size * 0.7,
+    top: size * 0.7,
+    bottom: -size * 0.7,
     near: 1,
     far: 130,
   });
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.bias = -0.00015;
-  sun.shadow.normalBias = 0.08;
-  sun.shadow.radius = 3;
+  sun.shadow.normalBias = 0.012;
+  sun.shadow.radius = 2;
   sun.target.position.set(0, 0, 0);
   scene.add(sun, sun.target);
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -99,7 +112,6 @@ export function createNatureView(
   let lastSkyKey = '';
   const sunDirection = new THREE.Vector3();
 
-  const { n, size } = world;
   const terrainGeo = new THREE.PlaneGeometry(size, size, n - 1, n - 1);
   terrainGeo.rotateX(-Math.PI / 2);
   const groundColors = new Float32Array(n * n * 3);
@@ -121,8 +133,16 @@ export function createNatureView(
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <color_fragment>',
       `#include <color_fragment>
-      float grain=fbm(vTerrainPosition*18.);float patches=fbm(vTerrainPosition*.85);
-      diffuseColor.rgb*=.78+.30*grain+.15*patches;`,
+      float grain=fbm(vTerrainPosition*64.);float patches=fbm(vTerrainPosition*2.7);
+      float grit=smoothstep(.66,.82,noise3(vTerrainPosition*95.));
+      diffuseColor.rgb*=.62+.5*grain+.22*patches;
+      diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.28,.23,.15),grit*.28);`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <normal_fragment_maps>',
+      `#include <normal_fragment_maps>
+      float soilGrain=fbm(vTerrainPosition*36.);
+      normal=normalize(normal+vec3(dFdx(soilGrain),dFdy(soilGrain),0.)*.32);`,
     );
   };
   const terrain = new THREE.Mesh(terrainGeo, terrainMaterial);
@@ -147,10 +167,10 @@ export function createNatureView(
   const waterUniforms = { uTime: { value: 0 }, uThermal: { value: 0 } };
   const waterMaterial = new THREE.MeshPhysicalMaterial({
     color: 0x309dac,
-    roughness: 0.13,
-    metalness: 0.03,
-    transmission: 0.32,
-    thickness: 0.65,
+    roughness: 0.18,
+    metalness: 0,
+    transmission: 0.55,
+    thickness: 0.22,
     ior: 1.333,
     clearcoat: 1,
     clearcoatRoughness: 0.08,
@@ -181,7 +201,7 @@ export function createNatureView(
       vec2 advected=vWaterPosition.xz-vFlow*uTime*.35;
       float wave=fbm(vec3(advected*5.,uTime*.35));
       float foam=smoothstep(.61,.80,wave)*clamp(length(vFlow)*.23,0.,.6)*(1.-smoothstep(.03,.6,vDepth));
-      diffuseColor.rgb=mix(vec3(.16,.40,.35),vec3(.018,.20,.27),1.-exp(-vDepth*2.8));
+      diffuseColor.rgb=mix(vec3(.12,.26,.20),vec3(.012,.12,.14),1.-exp(-vDepth*4.8));
       diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.84,.94,.92),foam);
       if(uThermal>.5){float t=clamp((vHeat-12.)/140.,0.,1.)*5.;
         vec3 c0=vec3(.09,.16,.42),c1=vec3(.08,.48,.58),c2=vec3(.45,.68,.40),c3=vec3(.94,.77,.33),c4=vec3(.89,.38,.15);
@@ -219,16 +239,21 @@ export function createNatureView(
   const fireUniforms = {
     uTime: { value: 0 },
     uWind: { value: new THREE.Vector2() },
+    uCellWidth: { value: world.dx * 2.4 },
+    uFlameHeight: { value: world.landscape === 'creek' ? 1.15 : 2.2 },
   };
   const fireMaterial = new THREE.ShaderMaterial({
     uniforms: fireUniforms,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    // Alpha compositing keeps overlapping fine-grid flames from clipping to
+    // white. Emission is tone mapped here; their light still illuminates water,
+    // stones and plants through the physical point lights below.
+    blending: THREE.NormalBlending,
     side: THREE.DoubleSide,
-    vertexShader: `attribute float strength;attribute float seed;varying vec2 vUv;varying float vStrength;varying float vSeed;uniform vec2 uWind;
+    vertexShader: `attribute float strength;attribute float seed;varying vec2 vUv;varying float vStrength;varying float vSeed;uniform vec2 uWind;uniform float uCellWidth;uniform float uFlameHeight;
       void main(){vUv=uv;vStrength=strength;vSeed=seed;vec4 center=modelViewMatrix*instanceMatrix*vec4(0.,0.,0.,1.);
-      float h=.35+strength*2.2;vec3 offset=vec3(position.x*.95,position.y*h,0.);
+      float h=.18+strength*uFlameHeight;vec3 offset=vec3(position.x*uCellWidth,position.y*h,0.);
       vec4 drift=viewMatrix*vec4(uWind.x,0.,uWind.y,0.);offset+=drift.xyz*position.y*position.y*.16;
       gl_Position=projectionMatrix*(center+vec4(offset,0.));}`,
     fragmentShader: `varying vec2 vUv;varying float vStrength;varying float vSeed;uniform float uTime;${noiseGLSL}
@@ -255,8 +280,8 @@ export function createNatureView(
   scene.add(flames);
   const fireLights = Array.from({ length: 6 }, (_, i) => {
     const light = new THREE.PointLight(0xff6821, 0, 9, 2);
-    // Only active fire sources may enter the shadow pass. An inactive light has
-    // no depth cubemap; sampling it can invalidate every lit draw on WebGL.
+    // Activate a shadow only with an assigned source and a requested first
+    // update. Inactive lights must never sample an uninitialized depth map.
     light.castShadow = false;
     if (i < 2) {
       light.shadow.mapSize.set(512, 512);
@@ -340,6 +365,7 @@ export function createNatureView(
     radius = 1.2,
     thermal = false,
     disposed = false,
+    contextLost = false,
     seenRevision = -1;
   let frame = 0,
     lastWidth = 0,
@@ -351,6 +377,9 @@ export function createNatureView(
     strokePoint = null,
     brushCredit = 0;
   const color = new THREE.Color();
+  const meadowColor = new THREE.Color(0x65843c);
+  const charColor = new THREE.Color(0x251c17);
+  const riverbedColor = new THREE.Color(0x4c5b40);
   const object = new THREE.Object3D();
   const burnSites = [];
   const burnWeights = [];
@@ -419,6 +448,7 @@ export function createNatureView(
   }
   const lostContext = (e) => {
     e.preventDefault();
+    contextLost = true;
     onError?.('描画を再開するには、世界を開き直してください。');
   };
   // OrbitControls still records every touch; one-finger rotation is gated separately.
@@ -438,7 +468,7 @@ export function createNatureView(
     perspective.aspect = width / height;
     perspective.updateProjectionMatrix();
     const aspect = width / height;
-    const halfHeight = aspect < 1 ? 19 / aspect : 22;
+    const halfHeight = aspect < 1 ? (size * 0.56) / aspect : size * 0.62;
     ortho.left = -halfHeight * aspect;
     ortho.right = halfHeight * aspect;
     ortho.top = halfHeight;
@@ -461,7 +491,7 @@ export function createNatureView(
     sun.position.copy(sunDirection).multiplyScalar(60);
     sun.intensity = (day > 0 ? 3.8 : 0) * sunState.irradianceMultiplier;
     sun.color.setHSL(0.11 - (1 - day) * 0.07, 0.16 + (1 - day) * 0.45, 0.92);
-    hemisphere.intensity = 0.12 + day * 0.95 * (1 - cloud * 0.35);
+    hemisphere.intensity = 0.12 + day * 1.6 * (1 - cloud * 0.35);
     const fogColor = new THREE.Color().setHSL(
       0.55 + (1 - day) * 0.03,
       0.18,
@@ -503,19 +533,20 @@ export function createNatureView(
         const slope =
           Math.abs(world.height[Math.min(i + 1, n * n - 1)] - h) / world.dx;
         color.setHex(slope > 1.15 ? 0x737773 : 0x76684d);
-        color.lerp(new THREE.Color(0x5c7431), vegetation * 0.85);
+        color.lerp(meadowColor, vegetation * 0.9);
         color.multiplyScalar(1 - wet * 0.16);
         if (
           world.fire[i] > 0.01 ||
           (world.fuel[i] < 0.09 && world.temperature[i] > 70)
         )
-          color.lerp(new THREE.Color(0x251c17), 0.85);
-        if (d > 0.004) color.lerp(new THREE.Color(0x4c5b40), 0.35);
+          color.lerp(charColor, 0.85);
+        if (d > 0.004) color.lerp(riverbedColor, 0.35);
       }
       color.toArray(groundColors, k);
       if (world.fire[i] > 0.008) {
         burnSites.push(i);
-        burnWeightTotal += world.burnRate[i] / 0.012;
+        burnWeightTotal +=
+          (world.burnRate[i] * world.dx ** 2) / (0.012 * 0.4 ** 2);
         burnWeights.push(burnWeightTotal);
       }
     }
@@ -659,7 +690,7 @@ export function createNatureView(
 
   return {
     render(dt = 0, inputDt = dt) {
-      if (disposed) return;
+      if (disposed || contextLost) return;
       if (world.time < lastWorldTime) {
         smokeAge.fill(100);
         smokeAlpha.fill(0);
@@ -692,12 +723,12 @@ export function createNatureView(
       controls.object = camera;
       configureGestures();
       if (mode === '2d') {
-        ortho.position.set(0, 70, 0.001);
-        controls.target.set(0, 1, 0);
+        ortho.position.set(0, size * 2.2, 0.001);
+        controls.target.copy(focus);
         ortho.zoom = 1;
         ortho.updateProjectionMatrix();
       } else {
-        controls.target.set(0, 1.5, 0);
+        controls.target.copy(focus);
       }
       smokeMaterial.uniforms.uOrtho.value = mode === '2d' ? 1 : 0;
       lastWidth = 0;
@@ -715,16 +746,16 @@ export function createNatureView(
     setThermal(value) {
       thermal = value;
       waterUniforms.uThermal.value = value ? 1 : 0;
-      waterMaterial.transmission = value ? 0 : 0.32;
+      waterMaterial.transmission = value ? 0 : 0.55;
       waterMaterial.opacity = value ? 1 : 0.88;
       waterMaterial.needsUpdate = true;
     },
     resetCamera() {
-      perspective.position.set(32, 29, 37);
-      ortho.position.set(0, 70, 0.001);
+      perspective.position.copy(home);
+      ortho.position.set(0, size * 2.2, 0.001);
       ortho.zoom = 1;
       ortho.updateProjectionMatrix();
-      controls.target.set(0, 1.5, 0);
+      controls.target.copy(focus);
       controls.update();
     },
     dispose() {
@@ -755,6 +786,7 @@ export function createNatureView(
       sun.shadow.dispose();
       fireLights.forEach((light) => light.shadow.dispose());
       renderer.dispose();
+      renderer.forceContextLoss();
     },
   };
 }

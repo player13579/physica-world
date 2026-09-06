@@ -1,389 +1,400 @@
 import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import {
+  createBroadleafGeometry,
+  createFernGeometry,
+  createBladeGeometry,
+} from './foliage-models.js';
 
-// Natural dressing only.  The terrain, water, fire, lights and cameras deliberately
-// remain outside this module so they all use the same simulation owned by the app.
 const TAU = Math.PI * 2;
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const fract = (v) => v - Math.floor(v);
-const hash = (x, z, salt = 0) =>
-  fract(Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123);
+const clamp = THREE.MathUtils.clamp;
+const hash = (x, z, salt = 0) => {
+  const v = Math.sin(x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453123;
+  return v - Math.floor(v);
+};
 
-// instanceColor is supplied by InstancedMesh independently of vertexColors.
-// These primitives have no geometry.color buffer: requesting it would multiply
-// every instance tint by the missing attribute's default black value.
-function makeMaterial(color = 0xffffff, roughness = 0.9, vertexColors = false) {
-  return new THREE.MeshStandardMaterial({
-    color,
-    roughness,
-    metalness: 0,
-    vertexColors,
-  });
-}
-
-function disposeObjects(objects) {
-  const geometries = new Set(),
-    ownedMaterials = new Set();
-  objects.forEach((object) =>
-    object.traverse((node) => {
-      if (node.geometry) geometries.add(node.geometry);
-      const nodeMaterials = node.material
-        ? Array.isArray(node.material)
-          ? node.material
-          : [node.material]
-        : [];
-      nodeMaterials.forEach((material) => ownedMaterials.add(material));
-    }),
-  );
-  geometries.forEach((geometry) => geometry.dispose());
-  ownedMaterials.forEach((material) => material.dispose());
-}
-
-/**
- * Creates deterministic, simulation-aware vegetation and geology for a square world.
- * @param {THREE.Scene} scene
- * @param {object} world Nature engine state (height/water/fuel/fire arrays and n/size).
- */
+// Every plant is rooted in the same height/fuel/water fields used by the tools.
+// Geometry, including individual leaf silhouettes, is the authored visual asset.
 export function createEnvironment(scene, world) {
   const root = new THREE.Group();
   root.name = 'procedural-natural-environment';
   scene.add(root);
-
-  let builtRevision = -1;
-  let disposed = false;
-  let vegetation = [];
-  let grass = null;
-  let reeds = null;
-  let grassBlades = [];
-  let canopySignature = '',
-    canopyStamp = 0,
-    lastCanopyTime = -Infinity;
+  const half = world.size / 2;
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
+  const geometries = new Set(),
+    materials = new Set(),
+    dynamicGeometry = new Set();
+  const windTime = { value: 0 },
+    windStrength = { value: 0.2 };
+  let trees = [],
+    cover = [],
+    disposed = false,
+    lastUpdate = -Infinity;
+  let builtRevision = -1,
+    lastCanopy = -Infinity,
+    canopySignature = '',
+    canopyStamp = 0;
+  const ownGeometry = (geometry) => {
+    geometries.add(geometry);
+    return geometry;
+  };
+  const ownMaterial = (material) => {
+    materials.add(material);
+    return material;
+  };
 
-  const dimensions = () => ({
-    n: world.n || 80,
-    size: world.size || 32,
-    half: (world.size || 32) * 0.5,
-  });
-  function read(x, z) {
-    const { n, size, half } = dimensions();
-    const xi = clamp(Math.round(((x + half) / size) * (n - 1)), 0, n - 1);
-    const zi = clamp(Math.round(((z + half) / size) * (n - 1)), 0, n - 1);
-    const i = zi * n + xi;
-    return {
-      height: world.height?.[i] || 0,
-      water: Math.max(0, world.water?.[i] || 0),
-      fuel: clamp(world.fuel?.[i] ?? 1, 0, 3),
-      fire: clamp(world.fire?.[i] || 0, 0, 1),
-      moisture: clamp(world.moisture?.[i] || 0, 0, 1),
+  function cell(x, z) {
+    const ix = clamp(Math.round((x + half) / world.dx), 0, world.n - 1);
+    const iz = clamp(Math.round((z + half) / world.dx), 0, world.n - 1);
+    return iz * world.n + ix;
+  }
+  function heightAt(x, z) {
+    const gx = clamp((x + half) / world.dx, 0, world.n - 1);
+    const gz = clamp((z + half) / world.dx, 0, world.n - 1);
+    const x0 = Math.min(Math.floor(gx), world.n - 2),
+      z0 = Math.min(Math.floor(gz), world.n - 2);
+    const tx = gx - x0,
+      tz = gz - z0,
+      i = z0 * world.n + x0;
+    return THREE.MathUtils.lerp(
+      THREE.MathUtils.lerp(world.height[i], world.height[i + 1], tx),
+      THREE.MathUtils.lerp(
+        world.height[i + world.n],
+        world.height[i + world.n + 1],
+        tx,
+      ),
+      tz,
+    );
+  }
+  function material({
+    vertexColors = true,
+    roughness = 0.85,
+    foliage = false,
+    wind = false,
+    rock = false,
+  } = {}) {
+    const m = ownMaterial(
+      new THREE.MeshStandardMaterial({
+        vertexColors,
+        color: 0xffffff,
+        roughness,
+        metalness: 0,
+        side: foliage ? THREE.DoubleSide : THREE.FrontSide,
+      }),
+    );
+    const addWind = (shader) => {
+      shader.uniforms.uNatureTime = windTime;
+      shader.uniforms.uNatureWind = windStrength;
+      shader.vertexShader =
+        'uniform float uNatureTime;uniform float uNatureWind;\n' +
+        shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        vec3 plantRoot=vec3(0.);
+        #ifdef USE_INSTANCING
+          plantRoot=instanceMatrix[3].xyz;
+        #endif
+        float wave=sin(uNatureTime*1.45+plantRoot.x*.75+plantRoot.z*.53);
+        float bend=pow(max(position.y,0.),1.7)*uNatureWind;
+        transformed.x+=bend*(wave*.035+sin(uNatureTime*3.1+position.y*9.+plantRoot.x)*.009);
+        transformed.z+=bend*cos(uNatureTime*1.1+plantRoot.z*.8)*.018;`,
+      );
     };
+    m.onBeforeCompile = (shader) => {
+      if (wind) addWind(shader);
+      if (foliage) {
+        shader.vertexShader = 'varying vec2 vLeafUv;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvLeafUv=uv;',
+        );
+        shader.fragmentShader =
+          'varying vec2 vLeafUv;\n' + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float centre=1.-smoothstep(.014,.035,abs(vLeafUv.x-.5));
+          float veins=1.-smoothstep(.025,.08,abs(fract(vLeafUv.y*12.-abs(vLeafUv.x-.5)*6.)-.5));
+          diffuseColor.rgb*=.94+centre*.14+veins*.055;`,
+        );
+      }
+      if (rock) {
+        shader.vertexShader = 'varying vec3 vStone;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvStone=position;',
+        );
+        shader.fragmentShader =
+          'varying vec3 vStone;\n' + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float grain=fract(sin(dot(floor(vStone*220.),vec3(17.3,31.7,47.1)))*43758.5);
+          float veins=sin(vStone.x*24.+sin(vStone.z*18.)+vStone.y*31.);
+          diffuseColor.rgb*=.72+grain*.42+smoothstep(.75,1.,veins)*.13;`,
+        );
+      }
+    };
+    m.customProgramCacheKey = () => `nature-detail-${wind}-${rock}-${foliage}`;
+    if (wind) {
+      m.userData.depth = ownMaterial(
+        new THREE.MeshDepthMaterial({
+          depthPacking: THREE.RGBADepthPacking,
+          side: m.side,
+        }),
+      );
+      m.userData.depth.onBeforeCompile = addWind;
+      m.userData.depth.customProgramCacheKey = () => 'nature-wind-depth';
+    }
+    return m;
   }
 
-  function addInstanced(geometry, material, count, name) {
-    const mesh = new THREE.InstancedMesh(geometry, material, count);
+  const treeAssets = [3, 19, 41].map((seed) => {
+    const asset = createBroadleafGeometry(seed);
+    ownGeometry(asset.wood);
+    ownGeometry(asset.leaves);
+    return asset;
+  });
+  const bladeGeometry = ownGeometry(createBladeGeometry());
+  const fernGeometry = ownGeometry(createFernGeometry(73));
+  const woodMaterial = material({ roughness: 0.97, wind: true });
+  const leafMaterial = material({ roughness: 0.73, foliage: true, wind: true });
+  const grassMaterial = material({
+    vertexColors: Boolean(bladeGeometry.getAttribute('color')),
+    roughness: 0.88,
+    foliage: true,
+    wind: true,
+  });
+  const fernMaterial = material({ foliage: true, wind: true });
+  const rockMaterial = material({
+    vertexColors: false,
+    rock: true,
+    roughness: 0.79,
+  });
+  const wetRockMaterial = material({
+    vertexColors: false,
+    rock: true,
+    roughness: 0.36,
+  });
+  const stoneSource = new THREE.IcosahedronGeometry(1, 3);
+  stoneSource.deleteAttribute('normal');
+  stoneSource.deleteAttribute('uv');
+  const stoneGeometry = ownGeometry(mergeVertices(stoneSource));
+  stoneSource.dispose();
+  const stonePositions = stoneGeometry.attributes.position;
+  for (let i = 0; i < stonePositions.count; i++) {
+    const x = stonePositions.getX(i),
+      y = stonePositions.getY(i),
+      z = stonePositions.getZ(i);
+    const irregularity =
+      1 + 0.12 * Math.sin(x * 7 + z * 5) * Math.cos(y * 6 - z * 4);
+    stonePositions.setXYZ(
+      i,
+      x * irregularity,
+      y * irregularity * 0.68,
+      z * irregularity,
+    );
+  }
+  stoneGeometry.computeVertexNormals();
+
+  function instances(geometry, mat, count, name) {
+    const mesh = new THREE.InstancedMesh(geometry, mat, count);
     mesh.name = name;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (mat.userData.depth) mesh.customDepthMaterial = mat.userData.depth;
     root.add(mesh);
     return mesh;
   }
-
-  function treeMatrices(parts, tree, sway = 0) {
-    const bend = sway * (0.045 + tree.height * 0.018);
-    const angle = tree.angle + bend;
-    const trunkY = tree.base + tree.height * 0.5;
-    dummy.position.set(tree.x, trunkY, tree.z);
-    dummy.rotation.set(bend * 0.35, angle, bend * 0.2);
-    dummy.scale.set(tree.radius, tree.height, tree.radius);
+  function matrix(mesh, index, x, y, z, yaw, sx, sy = sx, sz = sx) {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(sx, sy, sz);
     dummy.updateMatrix();
-    parts.trunk.setMatrixAt(tree.index, dummy.matrix);
-
-    // A forked pair of branches gives broadleaf trunks a readable silhouette at close range.
-    for (let b = 0; b < 2; b++) {
-      const sign = b ? 1 : -1;
-      dummy.position.set(tree.x, tree.base + tree.height * 0.63, tree.z);
-      dummy.rotation.set(0, angle + sign * 0.72, sign * (0.48 + bend * 0.25));
-      dummy.scale.set(
-        tree.radius * 0.46,
-        tree.height * 0.38,
-        tree.radius * 0.46,
-      );
-      dummy.updateMatrix();
-      parts.branch.setMatrixAt(tree.index * 2 + b, dummy.matrix);
-    }
+    mesh.setMatrixAt(index, dummy.matrix);
   }
-
   function buildTrees() {
-    const { half } = dimensions();
     const candidates = [];
-    const target = 300;
-    // A jittered grid avoids visible random clumps while preserving deterministic placement.
-    for (let gz = 0; gz < 28 && candidates.length < target; gz++)
-      for (let gx = 0; gx < 28 && candidates.length < target; gx++) {
-        const r1 = hash(gx, gz, 3),
-          r2 = hash(gx, gz, 7),
-          keep = hash(gx, gz, 11);
-        if (keep < 0.49) continue;
-        const x = -half + ((gx + 0.15 + r1 * 0.7) / 28) * half * 2;
-        const z = -half + ((gz + 0.15 + r2 * 0.7) / 28) * half * 2;
-        const field = read(x, z);
-        // Dense dry vegetation is plausible forest floor; water and active burn clear it.
-        if (field.water > 0.035 || field.fuel < 0.45 || field.fire > 0.16)
-          continue;
-        candidates.push({
-          x,
-          z,
-          base: field.height,
-          height: 1.05 + hash(gx, gz, 15) * 1.9,
-          radius: 0.055 + hash(gx, gz, 18) * 0.05,
-          angle: hash(gx, gz, 21) * TAU,
-          conifer: hash(gx, gz, 26) > 0.43,
-          index: candidates.length,
-        });
-      }
-    const count = candidates.length;
-    // Instance colours carry the natural variation.  White base material prevents
-    // colour multiplication from turning already-dark foliage nearly black.
-    const trunkMat = makeMaterial();
-    const branchMat = makeMaterial();
-    const pineMat = makeMaterial();
-    const leafMat = makeMaterial();
-    const parts = {
-      trunk: addInstanced(
-        new THREE.CylinderGeometry(0.68, 1, 1, 7),
-        trunkMat,
-        count,
-        'tree-trunks',
-      ),
-      branch: addInstanced(
-        new THREE.CylinderGeometry(0.42, 0.9, 1, 6),
-        branchMat,
-        count * 2,
-        'tree-branches',
-      ),
-      pineLow: addInstanced(
-        new THREE.ConeGeometry(0.72, 0.82, 7, 2),
-        pineMat,
-        count,
-        'conifer-lower-canopy',
-      ),
-      pineMid: addInstanced(
-        new THREE.ConeGeometry(0.57, 0.74, 7, 2),
-        pineMat,
-        count,
-        'conifer-middle-canopy',
-      ),
-      pineTop: addInstanced(
-        new THREE.ConeGeometry(0.38, 0.65, 7, 2),
-        pineMat,
-        count,
-        'conifer-upper-canopy',
-      ),
-      leafA: addInstanced(
-        new THREE.IcosahedronGeometry(0.62, 1),
-        leafMat,
-        count,
-        'broadleaf-canopy-a',
-      ),
-      leafB: addInstanced(
-        new THREE.IcosahedronGeometry(0.49, 1),
-        leafMat,
-        count,
-        'broadleaf-canopy-b',
-      ),
-    };
-    // Each species owns different canopy meshes.  Zero the unused instances so an
-    // uninitialised instance cannot leave a pile of foliage at the world origin.
-    Object.values(parts).forEach((mesh) => {
-      if (mesh === parts.trunk || mesh === parts.branch) return;
-      for (let i = 0; i < count; i++)
-        mesh.setMatrixAt(i, new THREE.Matrix4().makeScale(0, 0, 0));
-    });
-    for (const tree of candidates) {
-      treeMatrices(parts, tree, 0);
-      const tone = 0.76 + hash(tree.x, tree.z, 33) * 0.24;
-      parts.trunk.setColorAt(
-        tree.index,
-        tint.setRGB(0.36 * tone, 0.21 * tone, 0.11 * tone),
-      );
-      for (let b = 0; b < 2; b++)
-        parts.branch.setColorAt(
-          tree.index * 2 + b,
-          tint.setRGB(0.3 * tone, 0.16 * tone, 0.07 * tone),
-        );
-      const canopy = tint.setRGB(0.13 * tone, 0.35 * tone, 0.17 * tone);
-      if (tree.conifer) {
-        [parts.pineLow, parts.pineMid, parts.pineTop].forEach((mesh, layer) => {
-          dummy.position.set(
-            tree.x,
-            tree.base + tree.height * (0.52 + layer * 0.19),
-            tree.z,
-          );
-          dummy.rotation.set(0, tree.angle + layer * 0.4, 0);
-          const spread = tree.height * (1.02 - layer * 0.18);
-          dummy.scale.set(spread, spread, spread);
-          dummy.updateMatrix();
-          mesh.setMatrixAt(tree.index, dummy.matrix);
-          mesh.setColorAt(tree.index, canopy);
-        });
-      } else {
-        [parts.leafA, parts.leafB].forEach((mesh, layer) => {
-          dummy.position.set(
-            tree.x + (layer ? 0.18 : -0.13),
-            tree.base + tree.height * (0.84 + layer * 0.1),
-            tree.z + (layer ? -0.12 : 0.16),
-          );
-          const spread = tree.height * (0.52 - layer * 0.05);
-          dummy.rotation.set(layer * 0.2, tree.angle, layer * 0.16);
-          dummy.scale.setScalar(spread);
-          dummy.updateMatrix();
-          mesh.setMatrixAt(tree.index, dummy.matrix);
-          mesh.setColorAt(tree.index, canopy);
-        });
-      }
+    const target = Math.max(18, Math.min(80, Math.round(world.size * 1.7)));
+    for (let k = 0; k < 1200 && candidates.length < target; k++) {
+      const x = (hash(k, 9, 1) * 2 - 1) * (half - 0.45);
+      const z = (hash(k, 9, 2) * 2 - 1) * (half - 0.5);
+      const i = cell(x, z);
+      if (world.water[i] > 0.008 || world.fuel[i] < 0.45) continue;
+      // Keep the foreground and the flowing channel open to touch and view.
+      if (
+        Math.abs(x) < world.size * 0.2 ||
+        (z > half * 0.35 && Math.abs(x) < half * 0.76)
+      )
+        continue;
+      if (candidates.some((t) => Math.hypot(t.x - x, t.z - z) < 1.3)) continue;
+      const h = (z > half * 0.35 ? 1.8 : 2.6) + hash(k, 12, 2) * 1.1;
+      candidates.push({
+        x,
+        z,
+        height: h,
+        yaw: hash(k, 7, 2) * TAU,
+        cell: i,
+        base: heightAt(x, z),
+        variant: k % 3,
+      });
     }
-    Object.values(parts).forEach((mesh) => {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    });
-    vegetation = candidates.map((tree) => ({ ...tree, parts }));
+    for (let v = 0; v < 3; v++) {
+      const group = candidates.filter((t) => t.variant === v);
+      const wood = instances(
+        treeAssets[v].wood,
+        woodMaterial,
+        group.length,
+        `tree-trunks-${v}`,
+      );
+      const leaves = instances(
+        treeAssets[v].leaves,
+        leafMaterial,
+        group.length,
+        `tree-leaves-${v}`,
+      );
+      group.forEach((t, index) => {
+        t.wood = wood;
+        t.leaves = leaves;
+        t.index = index;
+        trees.push(t);
+      });
+    }
   }
-
-  function buildGroundCover() {
-    const { half } = dimensions();
-    const grassMat = makeMaterial();
-    const reedMat = makeMaterial();
-    const bladeGeometry = new THREE.ConeGeometry(0.024, 0.34, 4, 1);
-    grass = addInstanced(bladeGeometry, grassMat, 1100, 'wind-grass');
-    reeds = addInstanced(
-      new THREE.CylinderGeometry(0.012, 0.018, 0.62, 5),
-      reedMat,
-      260,
-      'riverbank-reeds',
+  function buildCover() {
+    const blades = [],
+      ferns = [];
+    for (let k = 0; k < 36000; k++) {
+      const x = (hash(k, 41, 1) * 2 - 1) * (half - 0.035);
+      const z = (hash(k, 41, 2) * 2 - 1) * (half - 0.035);
+      const i = cell(x, z);
+      if (world.water[i] > 0.012 || world.fuel[i] < 0.13) continue;
+      const patch = 0.5 + 0.5 * Math.sin(x * 2.3 + Math.cos(z * 1.7));
+      if (hash(k, 42, 1) < 0.2 * (1 - patch)) continue;
+      blades.push({
+        x,
+        z,
+        cell: i,
+        base: heightAt(x, z),
+        height: 0.12 + hash(k, 42, 2) * 0.24,
+        yaw: hash(k, 42, 3) * TAU,
+        width: 0.65 + hash(k, 42, 4) * 0.8,
+      });
+    }
+    for (let k = 0; k < 350 && ferns.length < 100; k++) {
+      const x = (hash(k, 51, 1) * 2 - 1) * (half - 0.3),
+        z = (hash(k, 51, 2) * 2 - 1) * (half - 0.3);
+      const i = cell(x, z);
+      if (
+        world.water[i] > 0.006 ||
+        world.fuel[i] < 0.38 ||
+        Math.abs(x) < world.size * 0.09
+      )
+        continue;
+      if (ferns.some((f) => Math.hypot(f.x - x, f.z - z) < 0.45)) continue;
+      ferns.push({
+        x,
+        z,
+        cell: i,
+        base: heightAt(x, z),
+        height: 0.28 + hash(k, 53, 1) * 0.38,
+        yaw: hash(k, 53, 2) * TAU,
+        width: 1,
+      });
+    }
+    const grass = instances(
+      bladeGeometry,
+      grassMaterial,
+      blades.length,
+      'wind-grass',
     );
-    let g = 0,
-      r = 0;
-    for (let z = 0; z < 44 && g < 1100; z++)
-      for (let x = 0; x < 44 && g < 1100; x++) {
-        const xx = -half + ((x + hash(x, z, 41)) / 44) * half * 2;
-        const zz = -half + ((z + hash(x, z, 43)) / 44) * half * 2;
-        const field = read(xx, zz);
-        if (field.water > 0.025) continue;
-        const h = 0.12 + hash(x, z, 45) * 0.28;
-        dummy.position.set(xx, field.height + h * 0.5 - 0.015, zz);
-        dummy.rotation.set(
-          0,
-          hash(x, z, 47) * TAU,
-          (hash(x, z, 49) - 0.5) * 0.16,
-        );
-        dummy.scale.set(0.7, h / 0.34, 0.7);
-        dummy.updateMatrix();
-        grass.setMatrixAt(g, dummy.matrix);
-        const wet = field.moisture;
-        grass.setColorAt(
-          g,
-          tint.setRGB(0.22 + wet * 0.1, 0.28 + wet * 0.25, 0.08 + wet * 0.08),
-        );
-        grassBlades.push({
-          x: xx,
-          z: zz,
-          height: h,
-          yaw: hash(x, z, 47) * TAU,
-          index: g++,
-        });
-      }
-    for (let z = 0; z < 38 && r < 260; z++)
-      for (let x = 0; x < 38 && r < 260; x++) {
-        const xx = -half + ((x + hash(x, z, 51)) / 38) * half * 2;
-        const zz = -half + ((z + hash(x, z, 53)) / 38) * half * 2;
-        const field = read(xx, zz);
-        if (field.water < 0.004 || field.water > 0.13) continue;
-        const h = 0.36 + hash(x, z, 55) * 0.5;
-        dummy.position.set(
-          xx,
-          field.height + Math.min(field.water, 0.04) + h * 0.5,
-          zz,
-        );
-        dummy.rotation.set(
-          0,
-          hash(x, z, 57) * TAU,
-          (hash(x, z, 59) - 0.5) * 0.13,
-        );
-        dummy.scale.setScalar(h / 0.62);
-        dummy.updateMatrix();
-        reeds.setMatrixAt(r, dummy.matrix);
-        reeds.setColorAt(
-          r++,
-          tint.setRGB(0.25, 0.34 + field.moisture * 0.14, 0.09),
-        );
-      }
-    grass.count = g;
-    reeds.count = r;
-    grass.instanceMatrix.needsUpdate = reeds.instanceMatrix.needsUpdate = true;
-    if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
-    if (reeds.instanceColor) reeds.instanceColor.needsUpdate = true;
+    const fern = instances(
+      fernGeometry,
+      fernMaterial,
+      ferns.length,
+      'riverbank-ferns',
+    );
+    blades.forEach((p, index) =>
+      cover.push({ ...p, index, mesh: grass, fern: false }),
+    );
+    ferns.forEach((p, index) =>
+      cover.push({ ...p, index, mesh: fern, fern: true }),
+    );
   }
-
-  function buildRocksAndBoundary() {
-    const { half } = dimensions();
-    const rockMat = makeMaterial();
-    const rocks = addInstanced(
-      new THREE.DodecahedronGeometry(0.24, 1),
-      rockMat,
-      96,
-      'field-stones',
-    );
-    let k = 0;
-    for (let z = 0; z < 16 && k < 96; z++)
-      for (let x = 0; x < 16 && k < 96; x++) {
-        if (hash(x, z, 62) < 0.57) continue;
-        const xx = -half + ((x + hash(x, z, 63)) / 16) * half * 2,
-          zz = -half + ((z + hash(x, z, 65)) / 16) * half * 2;
-        const field = read(xx, zz);
-        if (field.water > 0.06) continue;
-        const scale = 0.35 + hash(x, z, 68) * 0.85;
-        dummy.position.set(xx, field.height + scale * 0.1, zz);
-        dummy.rotation.set(
-          hash(x, z, 70),
-          hash(x, z, 71) * TAU,
-          hash(x, z, 72),
+  function buildStones() {
+    const dry = [],
+      wet = [];
+    for (let k = 0; k < 1800; k++) {
+      const x = (hash(k, 63, 1) * 2 - 1) * (half - 0.1),
+        z = (hash(k, 63, 2) * 2 - 1) * (half - 0.1),
+        i = cell(x, z);
+      const inWater = world.water[i] > 0.005;
+      if (!inWater && hash(k, 63, 3) > 0.22) continue;
+      const r = inWater
+        ? 0.025 + hash(k, 65, 1) * 0.1
+        : 0.04 + Math.pow(hash(k, 65, 2), 4) * 0.34;
+      (inWater ? wet : dry).push({
+        x,
+        z,
+        r,
+        y: heightAt(x, z) + r * 0.18,
+        yaw: hash(k, 65, 3) * TAU,
+        tone: hash(k, 65, 4),
+      });
+    }
+    for (const [items, mat, name] of [
+      [dry, rockMaterial, 'field-stones'],
+      [wet, wetRockMaterial, 'river-pebbles'],
+    ]) {
+      const mesh = instances(stoneGeometry, mat, items.length, name);
+      items.forEach((p, index) => {
+        matrix(
+          mesh,
+          index,
+          p.x,
+          p.y,
+          p.z,
+          p.yaw,
+          p.r,
+          p.r,
+          p.r * (0.8 + p.tone * 0.4),
         );
-        dummy.scale.set(scale, scale * (0.65 + hash(x, z, 73) * 0.45), scale);
-        dummy.updateMatrix();
-        rocks.setMatrixAt(k, dummy.matrix);
-        const c = 0.62 + hash(x, z, 74) * 0.25;
-        rocks.setColorAt(k++, tint.setRGB(c, c * 0.95, c * 0.82));
-      }
-    rocks.count = k;
-    rocks.instanceMatrix.needsUpdate = true;
-    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
-
-    const points = [];
-    const edge = 44;
+        tint.setHex(
+          p.tone > 0.6 ? 0x95876d : p.tone > 0.28 ? 0x626b57 : 0x424943,
+        );
+        mesh.setColorAt(index, tint);
+      });
+    }
+  }
+  function buildBoundary() {
+    const points = [],
+      edge = world.n - 1;
     for (let i = 0; i <= edge; i++)
-      points.push([-half + (i / edge) * half * 2, -half]);
+      points.push([-half + (i / edge) * world.size, -half]);
     for (let i = 1; i <= edge; i++)
-      points.push([half, -half + (i / edge) * half * 2]);
+      points.push([half, -half + (i / edge) * world.size]);
     for (let i = 1; i <= edge; i++)
-      points.push([half - (i / edge) * half * 2, half]);
+      points.push([half - (i / edge) * world.size, half]);
     for (let i = 1; i <= edge; i++)
-      points.push([-half, half - (i / edge) * half * 2]);
-    const commonBottom =
-      Math.min(...points.map(([x, z]) => read(x, z).height)) - 2.1;
-    const colors = [0x6b4930, 0x805638, 0x96734c];
-    colors.forEach((color, band) => {
+      points.push([-half, half - (i / edge) * world.size]);
+    const bottom = Math.min(...points.map((p) => heightAt(...p))) - 0.35;
+    [0x39412a, 0x42372a, 0x302c23].forEach((hex, band) => {
       const positions = [],
         indices = [];
       points.forEach(([x, z], i) => {
-        const y = read(x, z).height;
-        const top = THREE.MathUtils.lerp(y, commonBottom, band / colors.length);
-        const bottom = THREE.MathUtils.lerp(
-          y,
-          commonBottom,
-          (band + 1) / colors.length,
+        const y = heightAt(x, z);
+        positions.push(
+          x,
+          THREE.MathUtils.lerp(y, bottom, band / 3),
+          z,
+          x,
+          THREE.MathUtils.lerp(y, bottom, (band + 1) / 3),
+          z,
         );
-        positions.push(x, top, z, x, bottom, z);
         if (i) {
           const a = (i - 1) * 2,
             b = i * 2;
@@ -397,202 +408,152 @@ export function createEnvironment(scene, world) {
       );
       geometry.setIndex(indices);
       geometry.computeVertexNormals();
-      const mesh = new THREE.Mesh(geometry, makeMaterial(color, 0.96, false));
+      dynamicGeometry.add(geometry);
+      const mat = ownMaterial(
+        new THREE.MeshStandardMaterial({ color: hex, roughness: 1 }),
+      );
+      const mesh = new THREE.Mesh(geometry, mat);
       mesh.name = `exposed-stratified-earth-${band}`;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.castShadow = mesh.receiveShadow = true;
       root.add(mesh);
     });
   }
-
   function refreshCanopies(force = false) {
-    if (!world.setCanopies) return;
-    const crowns = vegetation.map((tree) => {
-      const field = read(tree.x, tree.z);
-      const burn = Math.max(
-        field.fire,
-        clamp(1 - field.fuel / 0.55, 0, 1) * 0.88,
-      );
-      const scale = Math.max(0.025, 1 - burn * 0.94);
+    const crowns = trees.map((t) => {
+      const live =
+        clamp(world.fuel[t.cell] / 0.55, 0, 1) * (1 - world.fire[t.cell]);
       return {
-        x: tree.x,
-        z: tree.z,
-        base: field.height + tree.height * (tree.conifer ? 0.12 : 0.6),
-        top: field.height + tree.height * (1 + 0.12 * scale),
-        radius: tree.height * (tree.conifer ? 0.73 : 0.36) * scale,
-        opacity: 0.8 * (1 - burn),
+        x: t.x,
+        z: t.z,
+        base: t.base + t.height * 0.36,
+        top: t.base + t.height * 1.06,
+        radius: t.height * 0.36,
+        opacity: live * 0.63,
       };
     });
-    const signature = crowns
-      .map(
-        (c) =>
-          `${c.x.toFixed(1)},${c.z.toFixed(1)},${c.radius.toFixed(1)},${c.opacity.toFixed(1)}`,
-      )
-      .join(';');
+    const signature = crowns.map((c) => c.opacity.toFixed(1)).join(',');
     if (force || signature !== canopySignature) {
-      world.setCanopies(crowns, ++canopyStamp);
+      world.setCanopies?.(crowns, ++canopyStamp);
       canopySignature = signature;
     }
   }
-
-  function rebuild() {
-    if (disposed) return;
-    const stale = root.children.slice();
-    root.remove(...stale);
-    disposeObjects(stale);
-    vegetation = [];
-    grass = reeds = null;
-    grassBlades = [];
-    buildTrees();
-    buildGroundCover();
-    buildRocksAndBoundary();
-    refreshCanopies(true);
-    builtRevision = world.revision ?? 0;
-  }
-
   function update(time, settings = {}, thermal = false) {
     if (disposed) return;
-    if ((world.revision ?? 0) !== builtRevision) rebuild();
-    if (time < lastCanopyTime || time - lastCanopyTime >= 1) {
+    windTime.value = time;
+    windStrength.value = clamp((settings.wind ?? 2) / 3, 0, 2);
+    if (world.revision !== builtRevision) rebuild();
+    if (time < lastCanopy || time - lastCanopy >= 1) {
       refreshCanopies();
-      lastCanopyTime = time;
+      lastCanopy = time;
     }
-    const wind = settings.wind ?? world.settings?.wind ?? 2;
-    const windAngle =
-      ((settings.windAngle ?? world.settings?.windAngle ?? 30) * Math.PI) / 180;
-    const swayPhase = time * (0.72 + wind * 0.09);
-    vegetation.forEach((tree) => {
-      const field = read(tree.x, tree.z);
-      const gust =
-        Math.sin(swayPhase + tree.x * 0.43 + tree.z * 0.29) *
-        clamp(wind / 9, 0, 1);
-      treeMatrices(tree.parts, tree, gust * Math.cos(windAngle - tree.angle));
-      const burn = Math.max(
-        field.fire,
-        clamp(1 - field.fuel / 0.55, 0, 1) * 0.88,
+    if (time >= lastUpdate && time - lastUpdate < 0.2) return;
+    lastUpdate = time;
+    const dirty = new Set();
+    trees.forEach((t) => {
+      const live =
+        clamp(world.fuel[t.cell] / 0.55, 0, 1) * (1 - world.fire[t.cell]);
+      if (t.lastLive === live) return;
+      t.lastLive = live;
+      dirty.add(t.wood);
+      dirty.add(t.leaves);
+      matrix(t.wood, t.index, t.x, t.base, t.z, t.yaw, t.height);
+      matrix(
+        t.leaves,
+        t.index,
+        t.x,
+        t.base,
+        t.z,
+        t.yaw,
+        live > 0.06 ? t.height : 0,
       );
-      const living = 1 - burn;
-      const crownScale = Math.max(0.025, 1 - burn * 0.94);
-      if (tree.conifer) {
-        [tree.parts.pineLow, tree.parts.pineMid, tree.parts.pineTop].forEach(
-          (mesh, layer) => {
-            dummy.position.set(
-              tree.x + gust * (0.08 + layer * 0.04),
-              tree.base + tree.height * (0.52 + layer * 0.19),
-              tree.z,
-            );
-            dummy.rotation.set(
-              gust * 0.08,
-              tree.angle + layer * 0.4,
-              -gust * 0.12,
-            );
-            const spread = tree.height * (1.02 - layer * 0.18) * crownScale;
-            dummy.scale.set(spread, spread, spread);
-            dummy.updateMatrix();
-            mesh.setMatrixAt(tree.index, dummy.matrix);
-          },
-        );
-      } else {
-        [tree.parts.leafA, tree.parts.leafB].forEach((mesh, layer) => {
-          dummy.position.set(
-            tree.x + (layer ? 0.18 : -0.13) + gust * 0.1,
-            tree.base + tree.height * (0.84 + layer * 0.1),
-            tree.z + (layer ? -0.12 : 0.16),
-          );
-          const spread = tree.height * (0.52 - layer * 0.05) * crownScale;
-          dummy.rotation.set(
-            layer * 0.2,
-            tree.angle + gust * 0.1,
-            layer * 0.16 - gust * 0.12,
-          );
-          dummy.scale.setScalar(spread);
-          dummy.updateMatrix();
-          mesh.setMatrixAt(tree.index, dummy.matrix);
-        });
-      }
-      const green = tint.setRGB(
-        0.1 + living * 0.08,
-        0.075 + living * 0.28,
-        0.055 + living * 0.1,
+      t.wood.setColorAt(
+        t.index,
+        tint.setRGB(0.6 + live * 0.4, 0.5 + live * 0.5, 0.4 + live * 0.6),
       );
-      [
-        tree.parts.pineLow,
-        tree.parts.pineMid,
-        tree.parts.pineTop,
-        tree.parts.leafA,
-        tree.parts.leafB,
-      ].forEach((mesh) => mesh.setColorAt(tree.index, green));
-      tree.parts.trunk.setColorAt(
-        tree.index,
+      t.leaves.setColorAt(
+        t.index,
         tint.setRGB(
-          0.13 + living * 0.22,
-          0.07 + living * 0.14,
-          0.035 + living * 0.07,
+          0.22 + live * 0.78,
+          0.13 + live * 0.87,
+          0.075 + live * 0.925,
         ),
       );
     });
-    if (grass) {
-      grassBlades.forEach((blade) => {
-        const field = read(blade.x, blade.z);
-        const visible = field.water <= 0.025 && field.fuel > 0.035;
-        const burn = Math.max(field.fire, clamp(1 - field.fuel / 0.32, 0, 1));
-        const scaleY = visible ? ((1 - burn * 0.82) * blade.height) / 0.34 : 0;
-        const sway =
-          Math.sin(swayPhase * 1.7 + blade.x * 1.3 + blade.z * 0.9) *
-          clamp(wind / 10, 0, 1) *
-          0.19;
-        dummy.position.set(
-          blade.x + sway * 0.11,
-          field.height + blade.height * 0.5 - 0.015,
-          blade.z,
-        );
-        dummy.rotation.set(sway, blade.yaw, sway * 0.46);
-        dummy.scale.set(visible ? 0.7 : 0, scaleY, visible ? 0.7 : 0);
-        dummy.updateMatrix();
-        grass.setMatrixAt(blade.index, dummy.matrix);
-        const wet = field.moisture;
-        grass.setColorAt(
-          blade.index,
-          burn > 0.15
-            ? tint.setRGB(
-                0.12 + (1 - burn) * 0.12,
-                0.055 + (1 - burn) * 0.12,
-                0.025,
-              )
-            : tint.setRGB(
-                0.2 + wet * 0.12,
-                0.24 + wet * 0.3,
-                0.065 + wet * 0.1,
-              ),
-        );
-      });
-      grass.instanceMatrix.needsUpdate = true;
-      if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
-    }
-    if (vegetation.length) {
-      const parts = vegetation[0].parts;
-      Object.values(parts).forEach((mesh) => {
-        mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      });
-    }
-    // `thermal` is accepted for the shared renderer API.  Fire coloration remains
-    // field-driven above, avoiding a second decorative heat visualization.
+    cover.forEach((p) => {
+      const live =
+        clamp(world.fuel[p.cell] / 0.4, 0, 1) * (1 - world.fire[p.cell]);
+      const visible =
+        world.water[p.cell] < (p.fern ? 0.04 : 0.025) && live > 0.04;
+      const visualKey = visible ? live : -1;
+      if (p.visualKey === visualKey) return;
+      p.visualKey = visualKey;
+      dirty.add(p.mesh);
+      const h = visible ? p.height * (0.4 + live * 0.6) : 0;
+      matrix(
+        p.mesh,
+        p.index,
+        p.x,
+        p.base - 0.008,
+        p.z,
+        p.yaw,
+        h * p.width,
+        h,
+        h,
+      );
+      if (p.fern)
+        tint.setRGB(0.58 + live * 0.42, 0.5 + live * 0.5, 0.3 + live * 0.7);
+      else {
+        // The blade already owns a green vertex palette. Instance colour is a
+        // linear variation multiplier, not a second dark green albedo.
+        const variation = 0.72 + p.width * 0.24;
+        tint.setRGB(variation, variation, variation * 0.9);
+        if (live < 0.8) tint.multiplyScalar(0.2 + live * 0.8);
+      }
+      p.mesh.setColorAt(p.index, tint);
+    });
+    dirty.forEach((m) => {
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+    });
     void thermal;
   }
-
+  function rebuild() {
+    if (disposed) return;
+    root.children.forEach((m) => {
+      if (m.isInstancedMesh) m.dispose();
+      else if (m.name.startsWith('exposed-stratified-earth-')) {
+        materials.delete(m.material);
+        m.material.dispose();
+      }
+    });
+    root.clear();
+    dynamicGeometry.forEach((g) => g.dispose());
+    dynamicGeometry.clear();
+    trees = [];
+    cover = [];
+    buildTrees();
+    buildCover();
+    buildStones();
+    buildBoundary();
+    builtRevision = world.revision;
+    lastUpdate = -Infinity;
+    refreshCanopies(true);
+    update(world.time, world.settings);
+  }
   function dispose() {
     if (disposed) return;
     disposed = true;
-    const owned = root.children.slice();
-    root.remove(...owned);
-    disposeObjects(owned);
+    root.children.forEach((m) => {
+      if (m.isInstancedMesh) m.dispose();
+    });
+    root.clear();
     scene.remove(root);
-    vegetation = [];
-    grass = reeds = null;
-    grassBlades = [];
+    geometries.forEach((g) => g.dispose());
+    dynamicGeometry.forEach((g) => g.dispose());
+    materials.forEach((m) => m.dispose());
+    trees = [];
+    cover = [];
   }
-
   rebuild();
   return { update, rebuild, dispose };
 }
